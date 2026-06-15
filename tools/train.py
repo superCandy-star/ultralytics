@@ -46,6 +46,8 @@ def main():
     parser.add_argument("--device", type=str, default="0", help="训练设备: 'cpu', '0' (单卡), '0,1,2,3' (多卡)")
     parser.add_argument("--workers", type=int, default=8, help="数据加载线程数 (默认 8)")
     parser.add_argument("--resume", action="store_true", help="从上次中断处恢复训练")
+    parser.add_argument("--project", type=str, default="runs/train", help="项目目录 (默认 runs/train)")
+    parser.add_argument("--name", type=str, default="exp", help="实验名称 (默认 exp)")
     args = parser.parse_args()
 
     device = parse_device(args.device)
@@ -69,6 +71,8 @@ def main():
         workers=args.workers,
         resume=args.resume,
         pretrained=args.weights if args.weights else False,
+        project=args.project,
+        name=args.name,
     )
     return results
 
