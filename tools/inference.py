@@ -15,16 +15,51 @@ from typing import Dict, List, Tuple
 import cv2
 from ultralytics import YOLO
 import numpy as np
+import yaml
 
 
-def get_image_files(img_dir: str) -> List[str]:
-    """获取目录下所有图片文件"""
-    img_dir = Path(img_dir)
+# 颜色调色板（为不同类别分配不同颜色）
+COLORS = [
+    (255, 0, 0),      # 蓝色
+    (0, 255, 0),      # 绿色
+    (0, 0, 255),      # 红色
+    (255, 255, 0),    # 青色
+    (255, 0, 255),    # 品红
+    (0, 255, 255),    # 黄色
+    (128, 0, 0),      # 深蓝
+    (0, 128, 0),      # 深绿
+    (0, 0, 128),      # 深红
+    (128, 128, 0),    # 深青
+    (128, 0, 128),    # 深品红
+    (0, 128, 128),    # 深黄
+    (192, 192, 192),  # 浅灰
+    (128, 128, 128),  # 中灰
+]
+
+
+def get_color(class_id: int) -> Tuple[int, int, int]:
+    """根据类别ID获取颜色"""
+    return COLORS[class_id % len(COLORS)]
+
+
+def get_image_files(img_dirs) -> List[str]:
+    """获取目录下所有图片文件（支持单个目录或列表）"""
+    if isinstance(img_dirs, str):
+        img_dirs = [img_dirs]
+
+    all_images = []
     img_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff'}
-    return sorted([
-        str(f) for f in img_dir.rglob('*')
-        if f.suffix.lower() in img_extensions
-    ])
+
+    for img_dir in img_dirs:
+        img_dir = Path(img_dir)
+        if img_dir.exists():
+            images = [
+                str(f) for f in img_dir.rglob('*')
+                if f.suffix.lower() in img_extensions
+            ]
+            all_images.extend(images)
+
+    return sorted(all_images)
 
 
 def inference_image(model, img_path: str, conf: float) -> Tuple[np.ndarray, Dict]:
@@ -57,6 +92,7 @@ def inference_image(model, img_path: str, conf: float) -> Tuple[np.ndarray, Dict
             x1, y1, x2, y2 = [int(v) for v in box]
             class_id = int(cls_id)
             class_name = model.names[class_id]
+            color = get_color(class_id)
             detections.append({
                 'bbox': [x1, y1, x2, y2],
                 'conf': float(conf_score),
@@ -64,12 +100,12 @@ def inference_image(model, img_path: str, conf: float) -> Tuple[np.ndarray, Dict
                 'class_id': class_id
             })
 
-            # 绘制到图片
-            cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            # 绘制到图片（使用对应类别的颜色）
+            cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
             text = f"{class_name} {conf_score:.2f}"
             cv2.putText(
                 img, text, (x1, y1 - 10),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2
             )
 
     return img, {
@@ -116,12 +152,25 @@ def to_labelme_format(img_path: str, results: Dict, model) -> Dict:
 def main():
     parser = argparse.ArgumentParser(description='YOLOv11推理脚本')
     parser.add_argument('--weight', type=str, required=True, help='模型权重文件路径')
-    parser.add_argument('--img_dir', type=str, required=True, help='图片目录')
+    parser.add_argument('--img_dir', type=str, default=None, help='图片目录')
+    parser.add_argument('--data_yaml', type=str, default=None, help='数据集YAML文件路径')
+    parser.add_argument('--split', type=str, default='val', choices=['train', 'val'], help='数据集划分 (默认 val)')
     parser.add_argument('--conf', type=float, default=0.5, help='置信度阈值 (默认 0.5)')
     parser.add_argument('--save', action='store_true', help='保存标注图片')
     parser.add_argument('--labelme', action='store_true', help='保存为labelme JSON格式')
     parser.add_argument('--save_dir', type=str, default='runs/inference', help='保存目录 (默认 runs/inference)')
     args = parser.parse_args()
+
+    # 确定图片目录
+    if args.data_yaml:
+        with open(args.data_yaml) as f:
+            data = yaml.safe_load(f)
+        img_dir = data.get(args.split, '')
+        print(f"从YAML读取 {args.split} 数据集")
+    elif args.img_dir:
+        img_dir = args.img_dir
+    else:
+        parser.error("必须指定 --img_dir 或 --data_yaml 之一")
 
     # 创建保存目录
     save_dir = Path(args.save_dir)
@@ -140,7 +189,7 @@ def main():
     model = YOLO(args.weight)
 
     # 获取图片文件
-    img_files = get_image_files(args.img_dir)
+    img_files = get_image_files(img_dir)
     print(f"找到 {len(img_files)} 张图片")
 
     if not img_files:

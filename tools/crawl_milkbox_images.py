@@ -38,87 +38,77 @@ from icrawler.utils.session import Session as ICrawlerSession
 # 预设搜索词 — 覆盖不同品牌、类型、规格、场景
 # ============================================================================
 PRESET_QUERIES = {
-    # ---- 品牌维度 ----
-    "蒙牛": [
-        "蒙牛 纯牛奶 盒装",
-        "蒙牛 特仑苏 牛奶盒",
-        "蒙牛 纯甄 酸奶盒",
-        "蒙牛 早餐奶 盒装",
-        "蒙牛 未来星 儿童牛奶盒",
+    # ---- 真实场景：人物拿在手上 ----
+    "真实场景_人物": [
+        "woman drinking yogurt real life",
+        "man holding milk carton",
+        "child drinking milk bottle",
+        "people drinking yogurt photo",
+        "person holding milk box",
+        "girl with yogurt glass",
+        "breakfast milk real",
     ],
-    "伊利": [
-        "伊利 纯牛奶 盒装",
-        "伊利 金典 牛奶盒",
-        "伊利 安慕希 酸奶盒",
-        "伊利 QQ星 儿童牛奶盒",
-        "伊利 舒化奶 盒装",
+    # ---- 真实场景：喝/饮用 ----
+    "真实场景_饮用": [
+        "drinking yogurt from glass",
+        "pouring milk from carton",
+        "drinking milk real photo",
+        "person drink yogurt",
+        "milk beverage real life",
+        "drinking almond milk",
+        "oat milk drinking",
     ],
-    "光明": [
-        "光明 纯牛奶 盒装",
-        "光明 莫斯利安 酸奶盒",
-        "光明 优倍 鲜牛奶盒",
+    # ---- 真实场景：日常/家庭 ----
+    "真实场景_日常": [
+        "milk on breakfast table",
+        "yogurt daily life",
+        "home milk snack",
+        "family yogurt time",
+        "kitchen milk box",
+        "breakfast with milk photo",
+        "yogurt with fruit real",
     ],
-    # ---- 类型维度 ----
-    "纯牛奶": [
-        "纯牛奶 盒装 250ml",
-        "纯牛奶 盒装 1L",
-        "进口 纯牛奶 盒装",
-        "organic milk carton",
+    # ---- 产品实拍：拿在手上 ----
+    "产品实拍_手持": [
+        "蒙牛牛奶 人物 拿 真实",
+        "伊利酸奶 手拿 拍摄",
+        "光明牛奶 人物喝 真实照片",
+        "牛奶盒 人手拿",
+        "酸奶 杯子 喝 人物",
+        "yogurt hand hold real photo",
     ],
-    "酸奶": [
-        "酸奶 盒装 原味",
-        "酸奶 盒装 果粒",
-        "希腊酸奶 盒装",
+    # ---- 产品实拍：饮用场景 ----
+    "产品实拍_饮用": [
+        "蒙牛 喝 真实 照片",
+        "伊利 喝 实拍",
+        "牛奶 人喝 真实",
+        "酸奶 饮用 真实场景",
+        "milk drink photo real situation",
     ],
-    "鲜牛奶": [
-        "鲜牛奶 屋顶盒 包装",
-        "鲜牛奶 桶装 家庭装",
-        "巴氏杀菌 牛奶盒",
+    # ---- 类型实拍：真实 ----
+    "酸奶_真实": [
+        "yogurt real photo person",
+        "酸奶 真实 照片 人",
+        "greek yogurt drinking real",
+        "fruit yogurt eating real",
     ],
-    # ---- 规格维度 ----
-    "小包装": [
-        "牛奶 迷你盒 125ml",
-        "儿童牛奶 小盒装 200ml",
-        "small milk carton 200ml",
+    "牛奶_真实": [
+        "milk real photo drinking",
+        "牛奶 真实 喝 照片",
+        "fresh milk real life",
     ],
-    "大包装": [
-        "牛奶 家庭装 1L 盒装",
-        "milk carton 1 liter",
-    ],
-    # ---- 类型/包装维度 ----
-    "利乐包装": [
-        "Tetra Pak milk carton",
-        "利乐枕 牛奶包装",
-        "无菌砖 牛奶盒",
-    ],
-    "屋顶盒": [
-        "gable top milk carton",
-        "屋顶盒 鲜牛奶",
-    ],
-    # ---- 海外/进口 ----
-    "进口牛奶": [
-        "进口牛奶 盒装 安佳",
-        "进口牛奶 盒装 德运",
-        "进口牛奶 盒装 欧德堡",
-        "a2 milk carton",
-        "Lactaid milk carton",
-        "fairlife milk carton",
-        "oat milk carton",
-    ],
-    # ---- 其他乳制品包装 ----
-    "其他乳品": [
-        "豆奶 盒装",
-        "杏仁奶 盒装",
-        "椰奶 盒装",
-        "巧克力牛奶 盒装",
-        "strawberry milk carton",
+    # ---- 去掉高度广告性的词 ----
+    "避免包装照": [
+        "product shot milk not on white",
+        "milk lifestyle photo",
+        "casual milk moment",
     ],
 }
 
 # ============================================================================
 # 全局计数器 — 跟踪跳过的失效链接
 # ============================================================================
-_skip_stats = {"404": 0, "403": 0, "429": 0, "503": 0, "network_err": 0}
+_skip_stats = {"404": 0, "403": 0, "429": 0, "503": 0, "400": 0, "500": 0, "network_err": 0}
 
 
 def reset_skip_stats():
@@ -204,8 +194,8 @@ class RobustImageDownloader(ImageDownloader):
         self,
         task,
         default_ext,
-        timeout=8,          # 15→8, 减少单次等待
-        max_retry=2,        # 5→2, 失效链接快速跳过
+        timeout=15,         # 增加超时时间
+        max_retry=3,        # 增加重试次数
         overwrite=False,
         **kwargs,
     ):

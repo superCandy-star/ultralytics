@@ -63,6 +63,20 @@ def img2label_paths(img_paths: list[str], label_dir: str = "labels", suffix: str
     return [sb.join(x.rsplit(sa, 1)).rsplit(".", 1)[0] + f"{suffix}" for x in img_paths]
 
 
+def img2two_label_paths(img_paths: list[str], label_dir: str = "labels", suffix: str = ".txt") -> list[str]:
+    """Convert image paths to zero label paths by replacing 'images' with 'labels', 'train' with 'zero_train', 'val' with 'zero_val'."""
+    sa, sb = f"{os.sep}images{os.sep}", f"{os.sep}{label_dir}{os.sep}"  # /images/, /labels/ substrings
+    paths = [sb.join(x.rsplit(sa, 1)).rsplit(".", 1)[0] + f"{suffix}" for x in img_paths]
+    zero_paths = []
+    for p in paths:
+        if f"{os.sep}train{os.sep}" in p:
+            p = p.replace(f"{os.sep}train{os.sep}", f"{os.sep}two_train{os.sep}")
+        elif f"{os.sep}val{os.sep}" in p:
+            p = p.replace(f"{os.sep}val{os.sep}", f"{os.sep}two_val{os.sep}")
+        zero_paths.append(p)
+    return zero_paths
+
+
 def check_file_speeds(
     files: list[str], threshold_ms: float = 10, threshold_mb: float = 50, max_files: int = 5, prefix: str = ""
 ):
