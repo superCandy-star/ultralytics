@@ -70,6 +70,8 @@ def main():
     parser.add_argument("--data_yaml", type=str, required=True, help="数据集配置文件路径")
     parser.add_argument("--weight", type=str, required=True, help="模型权重文件路径")
     parser.add_argument("--conf", type=float, default=0.5, help="置信度阈值 (默认 0.5)")
+    parser.add_argument("--split", type=str, default="val", choices=["train", "val"], help="验证集选择 (默认 val)")
+    parser.add_argument("--cache", action="store_true", help="使用缓存（默认禁用缓存）")
     parser.add_argument("--labelme", action="store_true", help="保存结果为labelme JSON格式")
     parser.add_argument("--save_dir", type=str, default="runs/val", help="保存目录 (默认 runs/val)")
     args = parser.parse_args()
@@ -77,25 +79,43 @@ def main():
     # 加载模型
     model = YOLO(args.weight)
 
-    # 验证模型
-    metrics = model.val(data=args.data_yaml, conf=args.conf)
+    # 生成单个数据集的yaml文件（只包含选定的split）
+    data_info = load_data_yaml(args.data_yaml)
+    split_dirs = data_info.get(args.split, [])
+    if isinstance(split_dirs, str):
+        split_dirs = [split_dirs]
 
-    # 保存为labelme格式 - 直接推理验证集目录
+    if split_dirs:
+        # 创建临时yaml，使用所有选定的split数据集
+        temp_yaml = {
+            'names': data_info.get('names', {}),
+            'nc': data_info.get('nc', 0),
+            'train': [],
+            'val': split_dirs
+        }
+
+        from pathlib import Path
+        temp_yaml_path = Path(args.data_yaml).parent / f'temp_{args.split}.yaml'
+        with open(temp_yaml_path, 'w', encoding='utf-8') as f:
+            yaml.dump(temp_yaml, f)
+
+        # 验证模型
+        metrics = model.val(data=str(temp_yaml_path), conf=args.conf, cache=args.cache)
+
+        # 删除临时yaml
+        temp_yaml_path.unlink()
+    else:
+        print(f"错误: {args.split}集在data.yaml中不存在")
+        return None
+
+    # 保存为labelme格式
     if args.labelme:
         print(f"\n保存结果为labelme格式...")
-        data_info = load_data_yaml(args.data_yaml)
-        val_dir = data_info.get('val', '')
+        split_dir = split_dirs[0]
+        print(f"  {args.split}集路径: {split_dir}")
 
-        # 处理val_dir可能是列表的情况
-        if isinstance(val_dir, list):
-            val_dir = val_dir[0] if val_dir else ''
-
-        print(f"  验证集路径: {val_dir}")
-
-        if val_dir and Path(val_dir).exists():
-            # 使用predict直接在目录上进行推理，获取所有图片
-            results = model.predict(source=val_dir, conf=args.conf, save=False, verbose=False)
-
+        if split_dir and Path(split_dir).exists():
+            results = model.predict(source=split_dir, conf=args.conf, save=False, verbose=False)
             print(f"  找到 {len(results)} 张图片")
 
             for idx, result in enumerate(results, 1):
@@ -106,7 +126,7 @@ def main():
 
             print(f"  结果已保存到: {args.save_dir}")
         else:
-            print(f"  验证集路径不存在或为空")
+            print(f"  {args.split}集路径不存在或为空")
 
     return metrics
 

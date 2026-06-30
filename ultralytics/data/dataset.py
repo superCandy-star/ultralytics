@@ -167,7 +167,7 @@ class YOLODataset(BaseDataset):
         Returns:
             (list[dict]): List of label dictionaries, each containing information about an image and its annotations.
         """
-        self.label_files = img2two_label_paths(self.im_files)
+        self.label_files = img2label_paths(self.im_files)
         cache_path = Path(self.label_files[0]).parent.with_suffix(".cache")
         try:
             cache, exists = load_dataset_cache_file(cache_path), True  # attempt to load a *.cache file
@@ -789,7 +789,7 @@ class SemanticDataset(YOLODataset):
         Returns:
             (list[dict]): List of label dictionaries with mask file paths and image shapes.
         """
-        self.mask_files = img2two_label_paths(self.im_files, label_dir=self.data.get("masks_dir", "masks"), suffix=".png")
+        self.mask_files = img2label_paths(self.im_files, label_dir=self.data.get("masks_dir", "masks"), suffix=".png")
         cache_path = Path(self.mask_files[0]).parent.with_suffix(".cache")
 
         try:
