@@ -206,3 +206,6 @@ results.csv
 
 # CI test asset cache
 .ultralytics_cache/
+hand-obj-tracker-flowchart.pdf
+hand-obj-tracker-technical-doc.pdf
+20260630_inferece_result/

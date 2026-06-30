@@ -317,7 +317,8 @@ class HandObjBYTETracker(BYTETracker):
                 normal.append(track)
                 continue
 
-            hand = hand_by_id.get(track.anchor_hand_track_id)
+            # Use fallback mechanism to find hand
+            hand = self._held_candidate_hand(track, hand_by_id)
             if hand is None:
                 track.exit_anchor_mode()
                 normal.append(track)
@@ -332,7 +333,8 @@ class HandObjBYTETracker(BYTETracker):
     ) -> None:
         """Move unmatched object tracks into anchored-lost mode when their bound hand is tracked."""
         for track in tracks:
-            hand = hand_by_id.get(track.anchor_hand_track_id)
+            # Use fallback mechanism to find hand
+            hand = self._held_candidate_hand(track, hand_by_id)
             if track.anchor_enabled and hand is not None and self.anchor_track_buffer > 0:
                 track.mark_lost()
                 track.enter_anchor_mode()
@@ -395,8 +397,9 @@ class HandObjBYTETracker(BYTETracker):
             track.last_hand_obj_distance is not None
             and abs(distance - track.last_hand_obj_distance) <= self.hold_center_stable_thresh
         )
-        center_inside = self._center_in_box(track.xywh[:2], hand.xyxy) if self.hold_center_in_hand else False
-        is_held = center_inside or distance_stable
+        obj_center_in_hand = self._center_in_box(track.xywh[:2], hand.xyxy) if self.hold_center_in_hand else False
+        hand_center_in_obj = self._center_in_box(hand.xywh[:2], track.xyxy)
+        is_held = obj_center_in_hand or hand_center_in_obj or distance_stable
 
         if is_held:
             track.hold_confirm_count += 1
@@ -416,9 +419,34 @@ class HandObjBYTETracker(BYTETracker):
     def _held_candidate_hand(
         self, track: HandObjTrack, hand_by_id: dict[int, HandObjTrack]
     ) -> HandObjTrack | None:
-        """Return the hand used to evaluate held state without doing handover rebinding."""
+        """Return the hand used to evaluate held state without doing handover rebinding.
+
+        If the bound hand ID is lost, attempt to recover it by finding the nearest hand
+        to the last known hand position. If found within fallback distance, update the ID.
+        """
         if track.anchor_hand_track_id is not None:
-            return hand_by_id.get(track.anchor_hand_track_id)
+            hand = hand_by_id.get(track.anchor_hand_track_id)
+            if hand is not None:
+                return hand
+
+            # Hand ID fallback: try to recover binding using last known hand position
+            if track.anchor_hand_xywh is not None and hand_by_id:
+                last_hand_center = track.anchor_hand_xywh[:2]
+                nearest = None
+                min_dist = float('inf')
+
+                for candidate_hand in hand_by_id.values():
+                    dist = float(np.linalg.norm(candidate_hand.xywh[:2] - last_hand_center))
+                    if dist < min_dist:
+                        min_dist = dist
+                        nearest = candidate_hand
+
+                # If nearest hand is within fallback distance, treat as same hand with ID switch
+                fallback_distance = max(track.xywh[2], track.xywh[3]) * 1.5
+                if nearest is not None and min_dist <= fallback_distance:
+                    track.anchor_hand_track_id = nearest.track_id
+                    return nearest
+
         return self._nearest_hand(track, list(hand_by_id.values()))
 
     @staticmethod

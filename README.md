@@ -272,3 +272,255 @@ For bug reports and feature requests related to Ultralytics software, please vis
   <img src="https://github.com/ultralytics/assets/raw/main/social/logo-transparent.png" width="3%" alt="space">
   <a href="https://discord.com/invite/ultralytics"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-discord.png" width="3%" alt="Ultralytics Discord"></a>
 </div>
+
+---
+
+## 🔧 Custom Extensions: Hand-Anchored Object Tracker
+
+### Overview
+
+This repository includes a **Hand-Anchored Object Tracker** extension for smart fridge scenarios with two-class detection (hand + object). The tracker maintains object ID continuity even during hand occlusion by using hand trajectories as "anchors" for lost objects.
+
+### Problem Statement
+
+In hand-object interaction scenarios:
+- **Objects are frequently occluded by hands** → detector misses → object tracks lost
+- Standard tracking methods lose object IDs during occlusion
+- Users expect **continuous object tracking** even when occluded
+
+### Solution: Hand-Anchored Tracking
+
+**Core idea**: Use hand trajectory as an "anchor" for lost objects
+
+```
+When object misses detection but hand is tracked:
+1. Enter anchor_mode
+2. Propagate object position via hand motion
+3. When object redetected → re-activate with SAME ID
+4. Output synthetic boxes during miss period
+```
+
+### Key Features
+
+- ✅ **Object ID continuity** during occlusion periods
+- ✅ **Synthetic box output** fills detection gaps
+- ✅ **Hand ID fallback** handles hand track ID changes
+- ✅ **Multi-phase matching** (High → Low → Anchored) maximizes recovery
+- ✅ **Three-condition hold detection** robust across different grip poses
+- ✅ **Asymmetric confirmation** (2 frames to enable, 3 frames to disable)
+
+### Usage
+
+#### Basic Tracking
+
+```python
+from ultralytics import YOLO
+
+# Load model with hand-obj tracker
+model = YOLO("your_model.pt")
+
+# Track with hand-anchored mode
+results = model.track(
+    source="video.mp4",
+    tracker="handobjtrack.yaml",  # Use hand-obj tracker config
+    show=True
+)
+```
+
+#### Using Tracking Script
+
+```bash
+# Track video with hand-obj tracker
+python tools/track_hand_obj_video.py \
+    --weights runs/detect/train/weights/best.pt \
+    --source path/to/video.mp4 \
+    --tracker-config ultralytics/cfg/trackers/handobjtrack.yaml \
+    --save
+```
+
+#### Override Tracker Parameters
+
+```bash
+# Override specific parameters
+python tools/track_hand_obj_video.py \
+    --weights runs/detect/train/weights/best.pt \
+    --source path/to/video.mp4 \
+    --tracker-config ultralytics/cfg/trackers/handobjtrack.yaml \
+    --tracker-params anchor_track_buffer=20 hold_confirm_frames=3
+```
+
+### Configuration
+
+Key parameters in `ultralytics/cfg/trackers/handobjtrack.yaml`:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `hand_cls` | 0 | Hand class ID |
+| `obj_cls` | 1 | Object class ID |
+| `anchor_track_buffer` | 15 | Max frames to protect object by hand |
+| `anchor_max_bind_distance` | 150.0 | Max distance (px) to bind new object to hand |
+| `hold_confirm_frames` | 2 | Frames needed to confirm held state |
+| `hold_center_stable_thresh` | 8.0 | Max frame-to-frame distance change (px) |
+| `release_confirm_frames` | 3 | Frames needed to confirm released state |
+
+### Technical Design
+
+#### Five-Step Processing Pipeline
+
+1. **Detection Splitting**: Separate by confidence (high/low) and class (hand/obj)
+2. **Track Hands**: Standard ByteTrack for hand trajectories
+3. **Prepare Lost Object Pool**: Propagate anchored-lost objects BEFORE matching (critical!)
+4. **Track Objects** (Anchor-Enhanced):
+   - Phase 1: High-score matching → update held state
+   - Phase 2: Low-score matching → anchor decision
+   - Phase 3: Reactivate anchored-lost objects (keeps original ID)
+   - Phase 4: Initialize new objects
+5. **Format Output**: Real boxes + synthetic boxes (idx=-1 marker)
+
+#### Hold State Detection (Three-Condition OR)
+
+An object is considered "held" if **any** of these conditions is met:
+
+```python
+obj_center_in_hand = obj center inside hand box?
+hand_center_in_obj = hand center inside obj box?
+distance_stable = frame-to-frame distance change <= 8px?
+
+is_held = obj_center_in_hand OR hand_center_in_obj OR distance_stable
+```
+
+**Why OR?** Different grip poses require different evidence:
+- Full grip → obj center in hand ✓
+- Fingertip hold → hand center in obj ✓
+- Edge grip → distance stable ✓
+
+#### Anchor Protection (Three-Condition AND)
+
+Object enters anchor_mode when **all** conditions are met:
+
+```python
+if anchor_enabled AND hand_exists AND anchor_track_buffer > 0:
+    enter_anchor_mode()
+    propagate_with_hand()
+```
+
+| Condition | Purpose |
+|-----------|---------|
+| `anchor_enabled == True` | User confirmed (via 2-frame hold confirmation) |
+| `hand exists` | Can compute motion delta (for propagation) |
+| `buffer > 0` | Config allows anchor (prevents infinite protection) |
+
+#### Hand ID Fallback Mechanism
+
+**Problem**: Hand track IDs change when briefly occluded
+
+**Solution**: Spatial continuity assumption
+
+```python
+# When original hand ID not found:
+1. Use last known hand position (anchor_hand_xywh)
+2. Find nearest current hand
+3. If distance <= max(obj_w, obj_h) * 1.5:
+   - Update anchor_hand_track_id to new ID
+   - Continue protection ✓
+```
+
+**Critical Fix (2024-06-30)**: Applied fallback mechanism consistently in three locations:
+- `_update_held_state()` ✓
+- `_prepare_lost_object_tracks()` ✓ (fixed)
+- `_anchor_or_mark_lost()` ✓ (fixed)
+
+### Documentation
+
+- **Technical Documentation** (English): [`.claude/memory/hand-obj-tracker-technical-doc.md`](.claude/memory/hand-obj-tracker-technical-doc.md)
+- **技术文档** (中文): [`.claude/memory/hand-obj-tracker-技术文档-中文.md`](.claude/memory/hand-obj-tracker-技术文档-中文.md)
+- **Flowcharts**: [`.claude/memory/hand-obj-tracker-flowchart.md`](.claude/memory/hand-obj-tracker-flowchart.md)
+- **Design Evolution**: 
+  - v1: [`.claude/memory/hand-anchored-tracking-design.md`](.claude/memory/hand-anchored-tracking-design.md)
+  - v2: [`.claude/memory/hand-obj-tracker-design-v2.md`](.claude/memory/hand-obj-tracker-design-v2.md)
+- **Critical Fix**: [`.claude/memory/hand-obj-tracker-fallback-fix.md`](.claude/memory/hand-obj-tracker-fallback-fix.md)
+
+### Implementation Details
+
+**Key Files**:
+```
+ultralytics/trackers/
+├─ hand_obj_track.py              # Main implementation
+│  ├─ HandObjTrack class          # Track data structure
+│  └─ HandObjBYTETracker class    # Tracking logic
+└─ cfg/trackers/handobjtrack.yaml # Configuration
+
+tools/
+└─ track_hand_obj_video.py        # Inference script
+```
+
+**Key Methods**:
+- `_prepare_lost_object_tracks()`: Step 3, propagate lost objects
+- `_anchor_or_mark_lost()`: Decide anchor vs normal lost
+- `_associate_anchored()`: Step 4.3, reactivate lost objects
+- `_update_held_state()`: Confirm hold state
+- `_held_candidate_hand()`: Find hand with fallback mechanism
+- `propagate_with_hand()`: Apply hand motion to object
+
+### Testing Recommendations
+
+Test scenarios:
+1. **Hand brief occlusion**: Hand blocked by fridge door for 1-2 frames
+2. **Hand ID change**: Same hand gets new track ID (38 → 40)
+3. **Hand and obj both miss**: Both occluded simultaneously
+4. **Long occlusion**: Hand holding object during cleaning (5-10 frames)
+
+Expected results:
+- ✓ Object IDs remain continuous
+- ✓ Anchor protection survives hand ID changes
+- ✓ Synthetic boxes fill detection gaps
+- ✓ No ghost objects when hand drops item
+
+### Design Principles
+
+1. **Conservative activation, liberal maintenance**: 2 frames to enable, 3 frames to disable
+2. **OR for detection, AND for protection**: Flexible hold detection, strict protection entry
+3. **Spatial continuity over ID consistency**: Fallback uses position, not ID
+4. **Propagate before match**: Predicted positions must be current (Step 3 before Step 4)
+5. **Synthetic output during occlusion**: Users see continuous trajectories
+6. **new_id=False**: Core mechanism for ID continuity
+
+### Performance Tuning
+
+**Long occlusion scenarios** (cleaning items):
+```yaml
+anchor_track_buffer: 30  # Increase from default 15
+```
+
+**Small objects** (prone to false positives):
+```yaml
+hold_confirm_frames: 3              # Increase from default 2
+hold_center_stable_thresh: 5.0      # Decrease from default 8.0
+```
+
+**Jittery hands**:
+```yaml
+hold_center_stable_thresh: 12.0     # Increase from default 8.0
+release_confirm_frames: 5           # Increase from default 3
+```
+
+### Citation
+
+If you use this hand-anchored tracking extension in your research, please cite:
+
+```bibtex
+@software{hand_obj_tracker_2024,
+  author = {Tao, Jianwei},
+  title = {Hand-Anchored Object Tracker for Ultralytics YOLO},
+  year = {2024},
+  publisher = {GitHub},
+  journal = {GitHub repository},
+  howpublished = {\url{https://github.com/yourusername/ultralytics}}
+}
+```
+
+### License
+
+This extension follows the same licensing as Ultralytics YOLO (AGPL-3.0 / Enterprise License).
+
+---
