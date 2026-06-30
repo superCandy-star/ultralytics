@@ -1,0 +1,17 @@
+# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+
+# Hand-object tracker defaults for mode="track"
+# Designed for two-class smart-fridge models: hand=0, obj=1.
+
+tracker_type: handobjtrack # (str) Tracker backend: hand-object anchored ByteTrack
+track_high_thresh: 0.25 # (float) First-stage match threshold; raise for cleaner tracks, lower to keep more
+track_low_thresh: 0.1 # (float) Second-stage threshold for low-score matches; balances recovery vs drift
+new_track_thresh: 0.25 # (float) Start a new track if no match ≥ this; higher reduces false tracks
+track_buffer: 30 # (int) Frames to keep ordinary lost tracks alive
+match_thresh: 0.8 # (float) Standard ByteTrack association threshold
+fuse_score: True # (bool) Fuse detection score with motion/IoU for matching
+hand_cls: 0 # (int) Class id used for hand detections
+obj_cls: 1 # (int) Class id used for object detections
+anchor_track_buffer: 15 # (int) Max frames an object can be propagated by its bound hand
+anchor_max_bind_distance: 150 # (float) Max center distance in pixels when binding a new object to a hand; <=0 disables
+anchor_match_thresh: 0.8 # (float) Cost threshold when matching detections back to anchored-lost objects

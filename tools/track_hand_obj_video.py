@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""
+YOLOv11 hand-object anchored 视频目标跟踪测试脚本
+
+用法:
+    python tools/track_hand_obj_video.py --weight best.pt --video video.mp4 --output result.mp4
+    python tools/track_hand_obj_video.py --weight best.pt --video video.mp4 --output result.mp4 --conf 0.5
+    python tools/track_hand_obj_video.py --weight best.pt --video video.mp4 --output result.mp4 --anchor_track_buffer 20
+"""
+
+import argparse
+import shutil
+from pathlib import Path
+
+import yaml
+from ultralytics import YOLO
+
+
+ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_TRACKER = ROOT / "ultralytics/cfg/trackers/handobjtrack.yaml"
+
+
+def build_tracker_yaml(args, output_dir: Path) -> str:
+    """根据命令行参数生成临时tracker配置，未覆盖参数时直接使用默认配置。"""
+    overrides = {
+        "hand_cls": args.hand_cls,
+        "obj_cls": args.obj_cls,
+        "anchor_track_buffer": args.anchor_track_buffer,
+        "anchor_max_bind_distance": args.anchor_max_bind_distance,
+        "anchor_match_thresh": args.anchor_match_thresh,
+    }
+    overrides = {k: v for k, v in overrides.items() if v is not None}
+
+    if not overrides:
+        return str(DEFAULT_TRACKER)
+
+    with open(DEFAULT_TRACKER, "r", encoding="utf-8") as f:
+        tracker_cfg = yaml.safe_load(f)
+    tracker_cfg.update(overrides)
+
+    runtime_tracker = output_dir / "handobjtrack_runtime.yaml"
+    with open(runtime_tracker, "w", encoding="utf-8") as f:
+        yaml.safe_dump(tracker_cfg, f, sort_keys=False, allow_unicode=True)
+    return str(runtime_tracker)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="YOLOv11 hand-object anchored 视频跟踪")
+    parser.add_argument("--weight", type=str, required=True, help="模型权重文件")
+    parser.add_argument("--video", type=str, required=True, help="输入视频文件")
+    parser.add_argument("--output", type=str, default="output.mp4", help="输出视频文件路径")
+    parser.add_argument("--conf", type=float, default=0.5, help="置信度阈值")
+    parser.add_argument("--hand_cls", type=int, default=None, help="hand类别ID，默认读取handobjtrack.yaml")
+    parser.add_argument("--obj_cls", type=int, default=None, help="obj类别ID，默认读取handobjtrack.yaml")
+    parser.add_argument("--anchor_track_buffer", type=int, default=None, help="obj丢检后由hand锚定传播的最大帧数")
+    parser.add_argument("--anchor_max_bind_distance", type=float, default=None, help="新obj绑定hand的最大中心距离像素")
+    parser.add_argument("--anchor_match_thresh", type=float, default=None, help="anchored-lost obj重关联匹配阈值")
+    args = parser.parse_args()
+
+    if not Path(args.video).exists():
+        print(f"错误: 视频文件不存在: {args.video}")
+        return
+    if not Path(args.weight).exists():
+        print(f"错误: 权重文件不存在: {args.weight}")
+        return
+    if not DEFAULT_TRACKER.exists():
+        print(f"错误: tracker配置不存在: {DEFAULT_TRACKER}")
+        return
+
+    output_path = Path(args.output)
+    output_dir = output_path.parent if output_path.parent != Path(".") else Path(".")
+    output_name = output_path.name
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    tracker_yaml = build_tracker_yaml(args, output_dir)
+
+    print(f"加载模型: {args.weight}")
+    model = YOLO(args.weight)
+
+    print(f"开始hand-object anchored跟踪视频: {args.video}")
+    print(f"tracker配置: {tracker_yaml}")
+    results = model.track(
+        source=args.video,
+        conf=args.conf,
+        tracker=tracker_yaml,
+        persist=True,
+        save=True,
+        project=str(output_dir),
+        name="",
+        verbose=False,
+    )
+
+    if results:
+        video_files = list(output_dir.glob("*.avi")) + list(output_dir.glob("*.mp4"))
+        video_files = [p for p in video_files if p.resolve() != output_path.resolve()]
+        if video_files:
+            src_video = video_files[0]
+            dst_video = output_dir / output_name
+            if src_video.resolve() != dst_video.resolve():
+                shutil.move(str(src_video), str(dst_video))
+            print(f"✓ hand-object anchored跟踪完成! 结果已保存到: {dst_video}")
+
+
+if __name__ == "__main__":
+    main()

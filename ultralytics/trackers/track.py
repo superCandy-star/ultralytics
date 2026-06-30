@@ -12,6 +12,7 @@ from .bot_sort import BOTSORT
 from .byte_tracker import BYTETracker
 from .deep_oc_sort import DeepOCSORT
 from .fast_tracker import FASTTracker
+from .hand_obj_track import HandObjBYTETracker
 from .oc_sort import OCSORT
 from .track_tracker import TRACKTRACK
 
@@ -21,6 +22,7 @@ TRACKER_MAP = {
     "botsort": BOTSORT,
     "tracktrack": TRACKTRACK,
     "fasttrack": FASTTracker,
+    "handobjtrack": HandObjBYTETracker,
     "ocsort": OCSORT,
     "deepocsort": DeepOCSORT,
 }
@@ -121,7 +123,8 @@ def on_predict_postprocess_end(predictor: object, persist: bool = False) -> None
         if len(tracks) == 0:
             continue
         idx = tracks[:, -1].astype(int)
-        predictor.results[i] = result[idx]
+        valid = idx >= 0
+        predictor.results[i] = result[idx[valid]]
 
         update_args = {"obb" if is_obb else "boxes": torch.as_tensor(tracks[:, :-1])}
         predictor.results[i].update(**update_args)
