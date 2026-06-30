@@ -28,6 +28,9 @@ def build_tracker_yaml(args, output_dir: Path) -> str:
         "anchor_track_buffer": args.anchor_track_buffer,
         "anchor_max_bind_distance": args.anchor_max_bind_distance,
         "anchor_match_thresh": args.anchor_match_thresh,
+        "hold_confirm_frames": args.hold_confirm_frames,
+        "hold_center_stable_thresh": args.hold_center_stable_thresh,
+        "hold_center_in_hand": args.hold_center_in_hand,
     }
     overrides = {k: v for k, v in overrides.items() if v is not None}
 
@@ -55,6 +58,14 @@ def main():
     parser.add_argument("--anchor_track_buffer", type=int, default=None, help="obj丢检后由hand锚定传播的最大帧数")
     parser.add_argument("--anchor_max_bind_distance", type=float, default=None, help="新obj绑定hand的最大中心距离像素")
     parser.add_argument("--anchor_match_thresh", type=float, default=None, help="anchored-lost obj重关联匹配阈值")
+    parser.add_argument("--hold_confirm_frames", type=int, default=None, help="确认手持所需的连续真实检测帧数")
+    parser.add_argument("--hold_center_stable_thresh", type=float, default=None, help="手-物中心距离变化小于该值时认为相对稳定")
+    parser.add_argument(
+        "--hold_center_in_hand",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="是否将obj中心在hand框内作为手持证据",
+    )
     args = parser.parse_args()
 
     if not Path(args.video).exists():

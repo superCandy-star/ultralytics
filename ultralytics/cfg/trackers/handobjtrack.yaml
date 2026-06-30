@@ -15,3 +15,7 @@ obj_cls: 1 # (int) Class id used for object detections
 anchor_track_buffer: 15 # (int) Max frames an object can be propagated by its bound hand
 anchor_max_bind_distance: 150 # (float) Max center distance in pixels when binding a new object to a hand; <=0 disables
 anchor_match_thresh: 0.8 # (float) Cost threshold when matching detections back to anchored-lost objects
+hold_confirm_frames: 2 # (int) Consecutive real-detection frames required before enabling hand anchoring
+hold_center_stable_thresh: 8 # (float) Max frame-to-frame change in hand-object center distance to treat as held
+hold_center_in_hand: True # (bool) Treat obj center inside hand box as hand-held evidence
+release_confirm_frames: 3 # (int) Consecutive frames of no hand-held evidence before disabling anchor

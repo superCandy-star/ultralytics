@@ -21,18 +21,28 @@ class HandObjTrack(STrack):
         self.anchor_hand_xywh: np.ndarray | None = None
         self.anchor_mode = False
         self.anchor_lost_frames = 0
+        self.anchor_enabled = False
+        self.hold_confirm_count = 0
+        self.last_hand_obj_distance: float | None = None
+        self.last_hold_update_frame = -1
+        self.release_confirm_count = 0
 
-    def bind_hand(self, hand_track: HandObjTrack | None) -> None:
+    def bind_hand(self, hand_track: HandObjTrack | None, enable_anchor: bool = False) -> None:
         """Bind this object track to a hand track and remember the hand's current box."""
         if hand_track is None:
             return
         self.anchor_hand_track_id = hand_track.track_id
         self.anchor_hand_xywh = hand_track.xywh.copy()
+        if enable_anchor:
+            self.anchor_enabled = True
 
     def clear_hand_binding(self) -> None:
         """Clear all hand-anchor state from this track."""
         self.anchor_hand_track_id = None
         self.anchor_hand_xywh = None
+        self.anchor_enabled = False
+        self.hold_confirm_count = 0
+        self.last_hand_obj_distance = None
         self.exit_anchor_mode()
 
     def enter_anchor_mode(self) -> None:
@@ -104,6 +114,10 @@ class HandObjBYTETracker(BYTETracker):
         self.anchor_track_buffer = int(getattr(args, "anchor_track_buffer", 15))
         self.anchor_max_bind_distance = float(getattr(args, "anchor_max_bind_distance", 150.0))
         self.anchor_match_thresh = float(getattr(args, "anchor_match_thresh", getattr(args, "match_thresh", 0.8)))
+        self.hold_confirm_frames = int(getattr(args, "hold_confirm_frames", 2))
+        self.hold_center_stable_thresh = float(getattr(args, "hold_center_stable_thresh", 8.0))
+        self.hold_center_in_hand = bool(getattr(args, "hold_center_in_hand", True))
+        self.release_confirm_frames = int(getattr(args, "release_confirm_frames", 3))
 
     def update(self, results, img: np.ndarray | None = None, feats: np.ndarray | None = None, **kwargs) -> np.ndarray:
         """Update hand/object tracks and return rows in Ultralytics tracker format."""
@@ -179,16 +193,16 @@ class HandObjBYTETracker(BYTETracker):
         self.multi_predict(strack_pool)
 
         u_track, u_detection = self._associate_first(strack_pool, detections, activated, refind)
-        self._refresh_object_bindings(activated, refind, hand_by_id)
+        self._update_held_states(activated, refind, hand_by_id)
 
         r_tracked = [strack_pool[i] for i in u_track if strack_pool[i].state == TrackState.Tracked]
         u_second = self._associate_second(r_tracked, detections_second, activated, refind, lost_on_unmatched=False)
-        self._refresh_object_bindings(activated, refind, hand_by_id)
+        self._update_held_states(activated, refind, hand_by_id)
         self._anchor_or_mark_lost([r_tracked[i] for i in u_second], hand_by_id, lost)
 
         u_detection = self._associate_anchored(anchored_tracks, detections, u_detection, activated, refind, hand_by_id)
         u_detection, detections = self._unconfirmed_association(unconfirmed, u_detection, detections, activated, removed)
-        self._refresh_object_bindings(activated, refind, hand_by_id)
+        self._update_held_states(activated, refind, hand_by_id)
         self._init_new_object_tracks(u_detection, detections, activated, hand_by_id)
 
     def _associate_first(
@@ -253,7 +267,7 @@ class HandObjBYTETracker(BYTETracker):
             track = candidates[itracked]
             det = remaining[idet]
             track.re_activate(det, self.frame_id, new_id=False)
-            self._refresh_object_binding(track, hand_by_id)
+            self._update_held_state(track, hand_by_id)
             refind.append(track)
         return [u_detection[i] for i in unmatched_detection]
 
@@ -279,11 +293,11 @@ class HandObjBYTETracker(BYTETracker):
                 max_dist = max(track.xywh[2], track.xywh[3]) * 2.0
             else:
                 max_dist = max(hand.xywh[2], hand.xywh[3], track.xywh[2], track.xywh[3]) * 2.0
-            gates[i] = np.where(center_dist[i] <= max_dist, dists[i], np.inf)
+            gates[i] = np.where(center_dist[i] <= max_dist, dists[i], 1e6)
         if self.args.fuse_score:
             finite = np.isfinite(gates)
             fused = matching.fuse_score(np.where(finite, gates, 1.0), detections)
-            gates = np.where(finite, fused, np.inf)
+            gates = np.where(finite, fused, 1e6)
         return gates
 
     def _prepare_lost_object_tracks(
@@ -294,7 +308,7 @@ class HandObjBYTETracker(BYTETracker):
         for track in self.lost_stracks:
             if not self._is_cls(track, self.obj_cls):
                 continue
-            if not track.anchor_mode:
+            if not track.anchor_mode or not track.anchor_enabled:
                 normal.append(track)
                 continue
 
@@ -319,7 +333,7 @@ class HandObjBYTETracker(BYTETracker):
         """Move unmatched object tracks into anchored-lost mode when their bound hand is tracked."""
         for track in tracks:
             hand = hand_by_id.get(track.anchor_hand_track_id)
-            if hand is not None and self.anchor_track_buffer > 0:
+            if track.anchor_enabled and hand is not None and self.anchor_track_buffer > 0:
                 track.mark_lost()
                 track.enter_anchor_mode()
                 if track.anchor_hand_xywh is None:
@@ -344,25 +358,73 @@ class HandObjBYTETracker(BYTETracker):
                 continue
             track.activate(self.kalman_filter, self.frame_id)
             nearest_hand = self._nearest_hand(track, hands)
-            track.bind_hand(nearest_hand)
+            track.bind_hand(nearest_hand, enable_anchor=False)
             activated.append(track)
+            self._update_held_state(track, hand_by_id)
 
-    def _refresh_object_bindings(
+    def _update_held_states(
         self,
         activated: list[HandObjTrack],
         refind: list[HandObjTrack],
         hand_by_id: dict[int, HandObjTrack],
     ) -> None:
-        """Refresh stored hand boxes for detected object tracks without rebinding to a different hand."""
+        """Update held-state evidence for object tracks that matched real detections this frame."""
         for track in [*activated, *refind]:
             if self._is_cls(track, self.obj_cls):
-                self._refresh_object_binding(track, hand_by_id)
+                self._update_held_state(track, hand_by_id)
 
-    def _refresh_object_binding(self, track: HandObjTrack, hand_by_id: dict[int, HandObjTrack]) -> None:
-        """Refresh one object's stored hand box when its bound hand is visible."""
-        hand = hand_by_id.get(track.anchor_hand_track_id)
-        if hand is not None:
-            track.bind_hand(hand)
+    def _update_held_state(self, track: HandObjTrack, hand_by_id: dict[int, HandObjTrack]) -> None:
+        """Confirm whether an object is currently hand-held before enabling hand anchoring."""
+        if track.last_hold_update_frame == self.frame_id:
+            return
+        track.last_hold_update_frame = self.frame_id
+        hand = self._held_candidate_hand(track, hand_by_id)
+        if hand is None:
+            track.hold_confirm_count = 0
+            track.last_hand_obj_distance = None
+            track.release_confirm_count += 1
+            if track.release_confirm_count >= self.release_confirm_frames and track.anchor_enabled:
+                track.anchor_enabled = False
+                track.release_confirm_count = 0
+            if hand_by_id and track.anchor_hand_track_id is not None:
+                pass
+            return
+
+        distance = float(np.linalg.norm(track.xywh[:2] - hand.xywh[:2]))
+        distance_stable = (
+            track.last_hand_obj_distance is not None
+            and abs(distance - track.last_hand_obj_distance) <= self.hold_center_stable_thresh
+        )
+        center_inside = self._center_in_box(track.xywh[:2], hand.xyxy) if self.hold_center_in_hand else False
+        is_held = center_inside or distance_stable
+
+        if is_held:
+            track.hold_confirm_count += 1
+            track.release_confirm_count = 0
+            if track.hold_confirm_count >= self.hold_confirm_frames:
+                track.bind_hand(hand, enable_anchor=True)
+        else:
+            track.hold_confirm_count = 0
+            track.release_confirm_count += 1
+            if track.release_confirm_count >= self.release_confirm_frames and track.anchor_enabled:
+                track.anchor_enabled = False
+                track.release_confirm_count = 0
+            if track.anchor_hand_track_id is None:
+                track.anchor_hand_xywh = None
+        track.last_hand_obj_distance = distance
+
+    def _held_candidate_hand(
+        self, track: HandObjTrack, hand_by_id: dict[int, HandObjTrack]
+    ) -> HandObjTrack | None:
+        """Return the hand used to evaluate held state without doing handover rebinding."""
+        if track.anchor_hand_track_id is not None:
+            return hand_by_id.get(track.anchor_hand_track_id)
+        return self._nearest_hand(track, list(hand_by_id.values()))
+
+    @staticmethod
+    def _center_in_box(center: np.ndarray, xyxy: np.ndarray) -> bool:
+        """Return whether a center point lies inside an xyxy box."""
+        return bool(xyxy[0] <= center[0] <= xyxy[2] and xyxy[1] <= center[1] <= xyxy[3])
 
     def _nearest_hand(self, track: HandObjTrack, hands: list[HandObjTrack]) -> HandObjTrack | None:
         """Return the nearest hand track to an object track, respecting the binding distance threshold."""
@@ -472,6 +534,7 @@ class HandObjBYTETracker(BYTETracker):
             for track in self.lost_stracks
             if self._is_cls(track, self.obj_cls)
             and track.is_activated
+            and track.anchor_enabled
             and track.anchor_mode
             and track.anchor_lost_frames <= self.anchor_track_buffer
         )
