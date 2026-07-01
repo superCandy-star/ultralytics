@@ -10,6 +10,7 @@ from .basetrack import TrackState
 from .byte_tracker import BYTETracker, STrack
 from .utils import matching
 from .utils.stracks import joint_stracks, parse_bboxes, sub_stracks
+from .virtual_door import VirtualDoorManager
 
 
 class HandObjTrack(STrack):
@@ -118,6 +119,9 @@ class HandObjBYTETracker(BYTETracker):
         self.hold_center_stable_thresh = float(getattr(args, "hold_center_stable_thresh", 8.0))
         self.hold_center_in_hand = bool(getattr(args, "hold_center_in_hand", True))
         self.release_confirm_frames = int(getattr(args, "release_confirm_frames", 3))
+        self.virtual_door_manager = VirtualDoorManager(args)
+        self.last_virtual_door_events: list[dict[str, Any]] = []
+        self.virtual_door_events: list[dict[str, Any]] = []
 
     def update(self, results, img: np.ndarray | None = None, feats: np.ndarray | None = None, **kwargs) -> np.ndarray:
         """Update hand/object tracks and return rows in Ultralytics tracker format."""
@@ -145,6 +149,7 @@ class HandObjBYTETracker(BYTETracker):
 
         self._remove_stale_lost(removed_stracks)
         self._merge_track_pools(activated_stracks, refind_stracks, lost_stracks, removed_stracks)
+        self._update_virtual_door_events(img)
         return self._format_output()
 
     def init_track(self, results, img: np.ndarray | None = None) -> list[HandObjTrack]:
@@ -553,6 +558,39 @@ class HandObjBYTETracker(BYTETracker):
         resa = [track for i, track in enumerate(atracks) if i not in dupa_set]
         resb = [track for i, track in enumerate(btracks) if i not in dupb_set]
         return resa, resb
+
+    def _update_virtual_door_events(self, img: np.ndarray | None) -> None:
+        """Update virtual-door event state from finalized current-frame object tracks."""
+        self.last_virtual_door_events = []
+        if not self.virtual_door_manager.enabled:
+            return
+
+        object_tracks = [
+            track
+            for track in self.tracked_stracks
+            if self._is_cls(track, self.obj_cls) and track.is_activated and track.state == TrackState.Tracked
+        ]
+        if bool(getattr(self.args, "virtual_door_include_anchored_lost", False)):
+            object_tracks.extend(
+                track
+                for track in self.lost_stracks
+                if self._is_cls(track, self.obj_cls)
+                and track.is_activated
+                and track.anchor_enabled
+                and track.anchor_mode
+                and track.anchor_lost_frames <= self.anchor_track_buffer
+            )
+
+        events = self.virtual_door_manager.update(self.frame_id, img, object_tracks)
+        self.last_virtual_door_events = events
+        self.virtual_door_events.extend(events)
+
+    def reset(self):
+        """Reset tracker state and virtual-door state for a new source/video."""
+        super().reset()
+        self.last_virtual_door_events = []
+        self.virtual_door_events = []
+        self.virtual_door_manager.reset()
 
     def _format_output(self) -> np.ndarray:
         """Format tracked and visible anchored-lost tracks for Ultralytics results."""

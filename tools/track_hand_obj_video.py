@@ -31,6 +31,15 @@ def build_tracker_yaml(args, output_dir: Path) -> str:
         "hold_confirm_frames": args.hold_confirm_frames,
         "hold_center_stable_thresh": args.hold_center_stable_thresh,
         "hold_center_in_hand": args.hold_center_in_hand,
+        "virtual_door_enabled": args.virtual_door_enabled,
+        "virtual_door_model": args.virtual_door_model,
+        "virtual_door_conf": args.virtual_door_conf,
+        "virtual_door_imgsz": args.virtual_door_imgsz,
+        "virtual_door_init_frames": args.virtual_door_init_frames,
+        "virtual_door_stability_frames": args.virtual_door_stability_frames,
+        "virtual_door_position_tolerance": args.virtual_door_position_tolerance,
+        "virtual_door_confirm_frames": args.virtual_door_confirm_frames,
+        "virtual_door_front_direction": args.virtual_door_front_direction,
     }
     overrides = {k: v for k, v in overrides.items() if v is not None}
 
@@ -65,6 +74,25 @@ def main():
         action=argparse.BooleanOptionalAction,
         default=None,
         help="是否将obj中心在hand框内作为手持证据",
+    )
+    parser.add_argument(
+        "--virtual_door_enabled",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="是否启用虚拟门put_in/take_out事件检测",
+    )
+    parser.add_argument("--virtual_door_model", type=str, default=None, help="虚拟门检测模型权重路径")
+    parser.add_argument("--virtual_door_conf", type=float, default=None, help="虚拟门初始化检测置信度阈值")
+    parser.add_argument("--virtual_door_imgsz", type=int, default=None, help="虚拟门模型推理尺寸")
+    parser.add_argument("--virtual_door_init_frames", type=int, default=None, help="虚拟门初始化最大帧数")
+    parser.add_argument("--virtual_door_stability_frames", type=int, default=None, help="虚拟门连续稳定确认帧数")
+    parser.add_argument("--virtual_door_position_tolerance", type=float, default=None, help="虚拟门位置稳定像素容差")
+    parser.add_argument("--virtual_door_confirm_frames", type=int, default=None, help="物体进出状态转换确认帧数")
+    parser.add_argument(
+        "--virtual_door_front_direction",
+        choices=["x_less_inside", "x_greater_inside"],
+        default=None,
+        help="正前方虚拟门内侧方向，按相机视角选择",
     )
     args = parser.parse_args()
 
@@ -110,6 +138,13 @@ def main():
             if src_video.resolve() != dst_video.resolve():
                 shutil.move(str(src_video), str(dst_video))
             print(f"✓ hand-object anchored跟踪完成! 结果已保存到: {dst_video}")
+
+    tracker = getattr(getattr(model, "predictor", None), "trackers", [None])[0]
+    events = getattr(tracker, "virtual_door_events", None)
+    if events:
+        print(f"虚拟门事件数量: {len(events)}")
+        for event in events:
+            print(event)
 
 
 if __name__ == "__main__":

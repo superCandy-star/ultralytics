@@ -19,3 +19,25 @@ hold_confirm_frames: 2 # (int) Consecutive real-detection frames required before
 hold_center_stable_thresh: 8 # (float) Max frame-to-frame change in hand-object center distance to treat as held
 hold_center_in_hand: True # (bool) Treat obj center inside hand box as hand-held evidence
 release_confirm_frames: 3 # (int) Consecutive frames of no hand-held evidence before disabling anchor
+
+# Virtual door event detection (disabled by default; does not change tracker output rows)
+virtual_door_enabled: False # (bool) Enable smart-fridge virtual door put_in/take_out event detection
+virtual_door_model: /root/taojianwei/projects/ultralytics/runs/detect/runs/train/exp-13/weights/best.pt # (str) Door model with side_cabinet/junction/cabinet classes
+virtual_door_conf: 0.25 # (float) Door model confidence threshold during initialization
+virtual_door_imgsz: 640 # (int) Door model inference image size; set null to use model default
+virtual_door_device: null # (str) Optional device override for door model inference
+virtual_door_verbose: False # (bool) Verbose door model prediction logs
+virtual_door_side_cabinet_cls: side_cabinet # (str|int) Door model class for side cabinet boxes
+virtual_door_junction_cls: junction # (str|int) Door model class for the junction box
+virtual_door_cabinet_cls: cabinet # (str|int) Door model class for the cabinet box
+virtual_door_init_frames: 30 # (int) Max startup frames used to lock virtual door geometry
+virtual_door_stability_frames: 5 # (int) Consecutive stable observations required before locking geometry
+virtual_door_position_tolerance: 10.0 # (float) Max front-door x variation in pixels across stable frames
+virtual_door_side_iou_tolerance: 0.8 # (float) IoU required to group side_cabinet boxes across stable frames
+virtual_door_confirm_frames: 2 # (int) Consecutive observations required for INSIDE/OUTSIDE transition events
+virtual_door_unknown_confirm_frames: 1 # (int) Consecutive observations to initialize UNKNOWN without emitting an event
+virtual_door_front_direction: x_less_inside # (str) x_less_inside or x_greater_inside, depending on camera orientation
+virtual_door_front_margin: 3.0 # (float) Deadband around front door line where state is not updated
+virtual_door_track_prune_frames: 120 # (int) Frames before stale per-track door state is removed
+virtual_door_fail_open: True # (bool) Disable door events instead of raising if initialization/model fails
+virtual_door_include_anchored_lost: False # (bool) Include hand-propagated synthetic object boxes in door event logic
