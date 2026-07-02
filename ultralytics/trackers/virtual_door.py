@@ -351,13 +351,13 @@ class VirtualDoorManager:
         """Classify an object center as inside/outside the front horizontal door line."""
         if self.front_y is None:
             return None
-        cx, cy = float(track.xywh[0]), float(track.xywh[1])
-        if self.front_direction in {"x_less_inside", "x_greater_inside"}:
-            if abs(cx - self.front_y) <= self.front_margin:
-                return None
-            if self.front_direction == "x_less_inside":
-                return INSIDE if cx < self.front_y else OUTSIDE
-            return INSIDE if cx > self.front_y else OUTSIDE
+        cy = float(track.xywh[1])
+        # if self.front_direction in {"x_less_inside", "x_greater_inside"}:
+        #     if abs(cx - self.front_y) <= self.front_margin:
+        #         return None
+        #     if self.front_direction == "x_less_inside":
+        #         return INSIDE if cx < self.front_y else OUTSIDE
+        #     return INSIDE if cx > self.front_y else OUTSIDE
 
         if abs(cy - self.front_y) <= self.front_margin:
             return None

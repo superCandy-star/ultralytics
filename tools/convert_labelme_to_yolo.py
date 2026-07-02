@@ -10,6 +10,9 @@ import random
 import yaml
 
 
+CLASS_NAMES = ['hand', 'obj']
+
+
 def load_labelme_json(json_path):
     """Load labelme JSON file."""
     encodings = ['utf-8', 'gb2312', 'latin1']
@@ -40,11 +43,12 @@ def convert_labelme_to_yolo(json_path, img_width, img_height, class_names):
     class_name_to_id = {name: idx for idx, name in enumerate(class_names)}
 
     for shape in data.get('shapes', []):
-        label = shape['label']
-        if label not in class_name_to_id:
+        label = str(shape.get('label', '')).strip()
+        if not label:
             continue
 
-        class_id = class_name_to_id[label]
+        mapped_label = 'hand' if label == 'hand' else 'obj'
+        class_id = class_name_to_id[mapped_label]
         points = shape['points']
 
         if shape['shape_type'] == 'rectangle':
@@ -102,8 +106,8 @@ def process_dataset(source_dir, output_dir, train_ratio=0.9):
 
     print(f"Found {len(json_files)} JSON files")
 
-    # Get class names
-    class_names = get_class_names(json_files)
+    # Fixed class mapping: hand -> 0, all other labels -> obj -> 1
+    class_names = CLASS_NAMES
     print(f"Classes: {class_names}")
 
     # Prepare file pairs
@@ -177,8 +181,8 @@ def _process_pair(json_file, img_file, img_output, label_output, class_names):
 
 
 if __name__ == '__main__':
-    source = '/root/taojianwei/datasets/IRIS/auxiliary_datasets/20260624_datasets'
-    output = '/root/taojianwei/datasets/IRIS/auxiliary_datasets/20260624_datasets_yolo'
+    source = '/root/taojianwei/datasets/IRIS/20260702_datasets'
+    output = '/root/taojianwei/datasets/IRIS/20260702_datasets_yolo'
 
     print(f"Converting dataset from {source}")
     print(f"Output directory: {output}")
