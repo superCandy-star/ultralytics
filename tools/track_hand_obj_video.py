@@ -144,6 +144,7 @@ def overlay_virtual_door_counts(video_path: Path, events: list[dict], door_manag
             events_by_frame.setdefault(frame_id, []).append(event)
 
     counts = {"take_out": 0, "put_in": 0}
+    persistent_event_lines: list[str] = []
     frame_id = 0
     while True:
         ok, frame = cap.read()
@@ -154,8 +155,14 @@ def overlay_virtual_door_counts(video_path: Path, events: list[dict], door_manag
             event_name = event.get("event")
             if event_name in counts:
                 counts[event_name] += 1
+            classification = event.get("classification") or {}
+            label = classification.get("label") or "unknown"
+            action = "放入" if event_name == "put_in" else "拿出" if event_name == "take_out" else str(event_name)
+            persistent_event_lines.append(f"{label} {action}")
+            persistent_event_lines = persistent_event_lines[-6:]
         _draw_virtual_door_mask(frame, door_manager)
-        _draw_text_with_background(frame, [f"拿出: {counts['take_out']}", f"放入: {counts['put_in']}"])
+        lines = [f"拿出: {counts['take_out']}", f"放入: {counts['put_in']}", *persistent_event_lines]
+        _draw_text_with_background(frame, lines)
         writer.write(frame)
 
     cap.release()
@@ -203,6 +210,15 @@ def build_tracker_yaml(args, output_dir: Path) -> str:
         "virtual_door_position_tolerance": args.virtual_door_position_tolerance,
         "virtual_door_confirm_frames": args.virtual_door_confirm_frames,
         "virtual_door_front_direction": args.virtual_door_front_direction,
+        "obj_classification_enabled": args.obj_classification_enabled,
+        "obj_classification_model": args.obj_classification_model,
+        "obj_classification_repo": args.obj_classification_repo,
+        "obj_classification_device": args.obj_classification_device,
+        "obj_classification_target_min_dim": args.obj_classification_target_min_dim,
+        "obj_classification_context_scale": args.obj_classification_context_scale,
+        "obj_classification_max_context_ratio": args.obj_classification_max_context_ratio,
+        "obj_classification_max_frames_per_phase": args.obj_classification_max_frames_per_phase,
+        "obj_classification_min_frame_gap": args.obj_classification_min_frame_gap,
     }
     overrides = {k: v for k, v in overrides.items() if v is not None}
 
@@ -257,6 +273,20 @@ def main():
         default=None,
         help="正前方虚拟门内侧方向，默认y_greater_inside；旧x方向选项保留兼容",
     )
+    parser.add_argument(
+        "--obj_classification_enabled",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="是否启用轨迹级物体分类并将类别挂到虚拟门事件",
+    )
+    parser.add_argument("--obj_classification_model", type=str, default=None, help="MobileNetV3分类模型best.pt路径")
+    parser.add_argument("--obj_classification_repo", type=str, default=None, help="mobilenetv3.py所在仓库路径")
+    parser.add_argument("--obj_classification_device", type=str, default=None, help="分类模型推理设备，如cuda:0或cpu")
+    parser.add_argument("--obj_classification_target_min_dim", type=float, default=None, help="obj-centered crop最小边长")
+    parser.add_argument("--obj_classification_context_scale", type=float, default=None, help="obj长边上下文扩展倍率")
+    parser.add_argument("--obj_classification_max_context_ratio", type=float, default=None, help="crop最大上下文倍率")
+    parser.add_argument("--obj_classification_max_frames_per_phase", type=int, default=None, help="每个阶段最多选择的关键帧数")
+    parser.add_argument("--obj_classification_min_frame_gap", type=int, default=None, help="分类关键帧最小间隔")
     args = parser.parse_args()
 
     if not Path(args.video).exists():

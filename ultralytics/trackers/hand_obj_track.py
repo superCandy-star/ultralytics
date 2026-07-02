@@ -8,6 +8,7 @@ import numpy as np
 
 from .basetrack import TrackState
 from .byte_tracker import BYTETracker, STrack
+from .obj_classifier import ObjTrackClassifier
 from .utils import matching
 from .utils.stracks import joint_stracks, parse_bboxes, sub_stracks
 from .virtual_door import VirtualDoorManager
@@ -27,6 +28,12 @@ class HandObjTrack(STrack):
         self.last_hand_obj_distance: float | None = None
         self.last_hold_update_frame = -1
         self.release_confirm_count = 0
+        self.classification_samples = []
+        self.classification_label: str | None = None
+        self.classification_conf: float | None = None
+        self.classification_scores: dict[str, float] | None = None
+        self.classification_frame_id = -1
+        self.classification_detail: dict[str, Any] | None = None
 
     def bind_hand(self, hand_track: HandObjTrack | None, enable_anchor: bool = False) -> None:
         """Bind this object track to a hand track and remember the hand's current box."""
@@ -120,6 +127,8 @@ class HandObjBYTETracker(BYTETracker):
         self.hold_center_in_hand = bool(getattr(args, "hold_center_in_hand", True))
         self.release_confirm_frames = int(getattr(args, "release_confirm_frames", 3))
         self.virtual_door_manager = VirtualDoorManager(args)
+        self.obj_classifier = ObjTrackClassifier(args)
+        self.obj_classification_results: dict[int, dict[str, Any]] = {}
         self.last_virtual_door_events: list[dict[str, Any]] = []
         self.virtual_door_events: list[dict[str, Any]] = []
 
@@ -149,6 +158,7 @@ class HandObjBYTETracker(BYTETracker):
 
         self._remove_stale_lost(removed_stracks)
         self._merge_track_pools(activated_stracks, refind_stracks, lost_stracks, removed_stracks)
+        self._update_obj_classification_samples(img)
         self._update_virtual_door_events(img)
         return self._format_output()
 
@@ -559,12 +569,8 @@ class HandObjBYTETracker(BYTETracker):
         resb = [track for i, track in enumerate(btracks) if i not in dupb_set]
         return resa, resb
 
-    def _update_virtual_door_events(self, img: np.ndarray | None) -> None:
-        """Update virtual-door event state from finalized current-frame object tracks."""
-        self.last_virtual_door_events = []
-        if not self.virtual_door_manager.enabled:
-            return
-
+    def _current_object_tracks_for_events(self) -> list[HandObjTrack]:
+        """Return current object tracks that can participate in virtual-door events."""
         object_tracks = [
             track
             for track in self.tracked_stracks
@@ -580,8 +586,43 @@ class HandObjBYTETracker(BYTETracker):
                 and track.anchor_mode
                 and track.anchor_lost_frames <= self.anchor_track_buffer
             )
+        return object_tracks
 
+    def _update_obj_classification_samples(self, img: np.ndarray | None) -> None:
+        """Collect object-centered crop samples for track-level classification."""
+        if not self.obj_classifier.enabled:
+            return
+        for track in self._current_object_tracks_for_events():
+            if track.state == TrackState.Tracked:
+                self.obj_classifier.add_sample(track, self.frame_id, img)
+
+    def _classification_payload_for_track(self, track: HandObjTrack | None) -> dict[str, Any]:
+        """Return or compute classification payload for one object track."""
+        empty = {"label": None, "conf": None, "scores": None, "frame_id": None, "detail": None}
+        if track is None or not self.obj_classifier.enabled:
+            return empty
+        result = None
+        if getattr(track, "classification_label", None) is None:
+            result = self.obj_classifier.classify_track(track)
+        if result is None and getattr(track, "classification_label", None) is None:
+            return empty
+        payload = self.obj_classifier.classification_payload(track)
+        self.obj_classification_results[int(track.track_id)] = payload
+        return payload
+
+    def _update_virtual_door_events(self, img: np.ndarray | None) -> None:
+        """Update virtual-door event state from finalized current-frame object tracks."""
+        self.last_virtual_door_events = []
+        if not self.virtual_door_manager.enabled:
+            return
+
+        object_tracks = self._current_object_tracks_for_events()
+        track_by_id = {int(track.track_id): track for track in object_tracks}
         events = self.virtual_door_manager.update(self.frame_id, img, object_tracks)
+        for event in events:
+            track = track_by_id.get(int(event.get("track_id", -1)))
+            classification = self._classification_payload_for_track(track)
+            event["classification"] = classification
         self.last_virtual_door_events = events
         self.virtual_door_events.extend(events)
 
@@ -590,6 +631,7 @@ class HandObjBYTETracker(BYTETracker):
         super().reset()
         self.last_virtual_door_events = []
         self.virtual_door_events = []
+        self.obj_classification_results = {}
         self.virtual_door_manager.reset()
 
     def _format_output(self) -> np.ndarray:

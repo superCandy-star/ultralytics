@@ -41,3 +41,24 @@ virtual_door_front_margin: 3.0 # (float) Deadband around front door line where s
 virtual_door_track_prune_frames: 120 # (int) Frames before stale per-track door state is removed
 virtual_door_fail_open: True # (bool) Disable door events instead of raising if initialization/model fails
 virtual_door_include_anchored_lost: False # (bool) Include hand-propagated synthetic object boxes in door event logic
+
+# Track-level object classification for virtual-door events
+obj_classification_enabled: False # (bool) Enable MobileNetV3 track-level classification for obj tracks
+obj_classification_model: /root/taojianwei/projects/mobilenetv3.pytorch-master/runs/obj_cls/mobilenetv3_small_224/best.pt # (str) Trained MobileNetV3 checkpoint
+obj_classification_repo: /root/taojianwei/projects/mobilenetv3.pytorch-master # (str) Repo containing mobilenetv3.py
+obj_classification_device: null # (str) Optional torch device, e.g. cuda:0 or cpu
+obj_classification_input_size: 224 # (int) Classifier input size; checkpoint input_size takes precedence
+obj_classification_target_min_dim: 160 # (float) Minimum obj-centered crop side before resize
+obj_classification_context_scale: 2.0 # (float) Crop side = max(obj long side * scale, target_min_dim)
+obj_classification_max_context_ratio: 4.0 # (float) Maximum crop side relative to obj long side
+obj_classification_min_track_len: 8 # (int) Shorter tracks fall back to global diverse key-frame selection
+obj_classification_max_samples: 120 # (int) Max crop samples cached per track
+obj_classification_max_frames_per_phase: 2 # (int) Key frames selected per phase
+obj_classification_min_frame_gap: 5 # (int) Minimum frame gap between selected key frames
+obj_classification_move_speed_thresh: 10.0 # (float) Smoothed speed threshold for moving phase
+obj_classification_stable_speed_thresh: 4.0 # (float) Smoothed speed threshold for put_down phase
+obj_classification_move_confirm_frames: 2 # (int) Consecutive frames needed to confirm moving start
+obj_classification_stable_confirm_frames: 3 # (int) Consecutive frames needed to confirm moving end
+obj_classification_area_full_ratio: 0.01 # (float) Obj area ratio considered full score
+obj_classification_speed_norm: 80.0 # (float) Speed value that gives zero stability score
+obj_classification_bbox_iou_diversity_thresh: 0.85 # (float) Max IoU between selected key-frame boxes

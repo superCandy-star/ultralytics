@@ -425,6 +425,13 @@ class VirtualDoorManager:
             "to_state": to_state,
             "center": [float(track.xywh[0]), float(track.xywh[1])],
             "xyxy": VirtualDoorManager._box_to_list(track.xyxy),
+            "classification": {
+                "label": getattr(track, "classification_label", None),
+                "conf": getattr(track, "classification_conf", None),
+                "scores": getattr(track, "classification_scores", None),
+                "frame_id": getattr(track, "classification_frame_id", None),
+                "detail": getattr(track, "classification_detail", None),
+            },
         }
 
     def _prune_states(self, frame_id: int, active_track_ids: set[int]) -> None:
