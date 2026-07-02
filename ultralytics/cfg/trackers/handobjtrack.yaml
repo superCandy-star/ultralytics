@@ -32,11 +32,11 @@ virtual_door_junction_cls: junction # (str|int) Door model class for the junctio
 virtual_door_cabinet_cls: cabinet # (str|int) Door model class for the cabinet box
 virtual_door_init_frames: 30 # (int) Max startup frames used to lock virtual door geometry
 virtual_door_stability_frames: 5 # (int) Consecutive stable observations required before locking geometry
-virtual_door_position_tolerance: 10.0 # (float) Max front-door x variation in pixels across stable frames
+virtual_door_position_tolerance: 10.0 # (float) Max front-door y variation in pixels across stable frames
 virtual_door_side_iou_tolerance: 0.8 # (float) IoU required to group side_cabinet boxes across stable frames
 virtual_door_confirm_frames: 2 # (int) Consecutive observations required for INSIDE/OUTSIDE transition events
 virtual_door_unknown_confirm_frames: 1 # (int) Consecutive observations to initialize UNKNOWN without emitting an event
-virtual_door_front_direction: x_less_inside # (str) x_less_inside or x_greater_inside, depending on camera orientation
+virtual_door_front_direction: y_greater_inside # (str) y_greater_inside or y_less_inside, depending on camera orientation
 virtual_door_front_margin: 3.0 # (float) Deadband around front door line where state is not updated
 virtual_door_track_prune_frames: 120 # (int) Frames before stale per-track door state is removed
 virtual_door_fail_open: True # (bool) Disable door events instead of raising if initialization/model fails

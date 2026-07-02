@@ -23,7 +23,7 @@ class DoorObservation:
     """Virtual door detections observed in one frame."""
 
     frame_id: int
-    front_x: float | None = None
+    front_y: float | None = None
     junction_xyxy: np.ndarray | None = None
     cabinet_xyxy: np.ndarray | None = None
     side_boxes: list[np.ndarray] = field(default_factory=list)
@@ -54,7 +54,7 @@ class VirtualDoorManager:
     state machine per track ID, and exposes events as dictionaries without changing the tracker output array format.
     """
 
-    FRONT_DIRECTIONS = {"x_less_inside", "x_greater_inside"}
+    FRONT_DIRECTIONS = {"y_greater_inside", "y_less_inside", "x_less_inside", "x_greater_inside"}
 
     def __init__(self, args: Any):
         self.enabled = self._as_bool(getattr(args, "virtual_door_enabled", False))
@@ -72,7 +72,7 @@ class VirtualDoorManager:
         self.side_iou_tolerance = float(getattr(args, "virtual_door_side_iou_tolerance", 0.8))
         self.confirm_frames = max(1, int(getattr(args, "virtual_door_confirm_frames", 2)))
         self.unknown_confirm_frames = max(1, int(getattr(args, "virtual_door_unknown_confirm_frames", 1)))
-        self.front_direction = getattr(args, "virtual_door_front_direction", "x_less_inside")
+        self.front_direction = getattr(args, "virtual_door_front_direction", "y_greater_inside")
         self.front_margin = max(0.0, float(getattr(args, "virtual_door_front_margin", 3.0)))
         self.track_prune_frames = max(1, int(getattr(args, "virtual_door_track_prune_frames", 120)))
         self.fail_open = self._as_bool(getattr(args, "virtual_door_fail_open", True))
@@ -89,7 +89,7 @@ class VirtualDoorManager:
                 f"Unsupported virtual_door_front_direction={self.front_direction!r}; "
                 f"expected one of {sorted(self.FRONT_DIRECTIONS)}."
             )
-        self.front_x: float | None = None
+        self.front_y: float | None = None
         self.front_source: dict[str, list[float]] = {}
         self.side_doors: dict[str, np.ndarray] = {}
         self.locked_frame_id: int | None = None
@@ -103,7 +103,7 @@ class VirtualDoorManager:
         self._init_seen = 0
         self.locked = False
         self.failed = False
-        self.front_x = None
+        self.front_y = None
         self.front_source = {}
         self.side_doors = {}
         self.locked_frame_id = None
@@ -192,17 +192,17 @@ class VirtualDoorManager:
         side_boxes = [box.copy() for box in xyxy[cls == class_ids["side"]]]
         side_boxes.sort(key=lambda box: (float(box[0]), float(box[1]), float(box[2]), float(box[3])))
 
-        front_x = None
+        front_y = None
         junction_xyxy = None
         cabinet_xyxy = None
         if junction is not None and cabinet is not None:
             junction_xyxy = junction.copy()
             cabinet_xyxy = cabinet.copy()
-            front_x = float(max(junction_xyxy[0], cabinet_xyxy[0]))
+            front_y = float(max(junction_xyxy[1], cabinet_xyxy[1]))
 
-        if front_x is None and not side_boxes:
+        if front_y is None and not side_boxes:
             return None
-        return DoorObservation(frame_id, front_x, junction_xyxy, cabinet_xyxy, side_boxes)
+        return DoorObservation(frame_id, front_y, junction_xyxy, cabinet_xyxy, side_boxes)
 
     def _load_model(self):
         """Lazily load the door model only while initialization is active."""
@@ -276,7 +276,7 @@ class VirtualDoorManager:
         if len(recent) < self.stability_frames:
             return
 
-        front_values = [obs.front_x for obs in recent if obs.front_x is not None]
+        front_values = [obs.front_y for obs in recent if obs.front_y is not None]
         front_locked = len(front_values) == self.stability_frames and (
             max(front_values) - min(front_values) <= self.position_tolerance
         )
@@ -284,11 +284,11 @@ class VirtualDoorManager:
         if not front_locked and not side_doors:
             return
 
-        self.front_x = None
+        self.front_y = None
         self.front_source = {}
         if front_locked:
-            self.front_x = float(np.median(np.asarray(front_values, dtype=np.float32)))
-            front_obs = [obs for obs in recent if obs.front_x is not None][-1]
+            self.front_y = float(np.median(np.asarray(front_values, dtype=np.float32)))
+            front_obs = [obs for obs in recent if obs.front_y is not None][-1]
             if front_obs.junction_xyxy is not None:
                 self.front_source["junction_xyxy"] = self._box_to_list(front_obs.junction_xyxy)
             if front_obs.cabinet_xyxy is not None:
@@ -348,15 +348,22 @@ class VirtualDoorManager:
         return events
 
     def _classify_front(self, track: Any) -> str | None:
-        """Classify an object center as inside/outside the front door line."""
-        if self.front_x is None:
+        """Classify an object center as inside/outside the front horizontal door line."""
+        if self.front_y is None:
             return None
-        cx = float(track.xywh[0])
-        if abs(cx - self.front_x) <= self.front_margin:
+        cx, cy = float(track.xywh[0]), float(track.xywh[1])
+        if self.front_direction in {"x_less_inside", "x_greater_inside"}:
+            if abs(cx - self.front_y) <= self.front_margin:
+                return None
+            if self.front_direction == "x_less_inside":
+                return INSIDE if cx < self.front_y else OUTSIDE
+            return INSIDE if cx > self.front_y else OUTSIDE
+
+        if abs(cy - self.front_y) <= self.front_margin:
             return None
-        if self.front_direction == "x_less_inside":
-            return INSIDE if cx < self.front_x else OUTSIDE
-        return INSIDE if cx > self.front_x else OUTSIDE
+        if self.front_direction == "y_less_inside":
+            return INSIDE if cy < self.front_y else OUTSIDE
+        return INSIDE if cy > self.front_y else OUTSIDE
 
     @staticmethod
     def _classify_side(track: Any, door_box: np.ndarray) -> str:
