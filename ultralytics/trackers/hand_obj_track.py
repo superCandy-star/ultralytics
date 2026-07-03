@@ -28,6 +28,8 @@ class HandObjTrack(STrack):
         self.last_hand_obj_distance: float | None = None
         self.last_hold_update_frame = -1
         self.release_confirm_count = 0
+        self.last_hold_obj_xywh: np.ndarray | None = None
+        self.last_hold_hand_xywh: np.ndarray | None = None
         self.classification_samples = []
         self.classification_label: str | None = None
         self.classification_conf: float | None = None
@@ -51,6 +53,8 @@ class HandObjTrack(STrack):
         self.anchor_enabled = False
         self.hold_confirm_count = 0
         self.last_hand_obj_distance = None
+        self.last_hold_obj_xywh = None
+        self.last_hold_hand_xywh = None
         self.exit_anchor_mode()
 
     def enter_anchor_mode(self) -> None:
@@ -126,6 +130,8 @@ class HandObjBYTETracker(BYTETracker):
         self.hold_center_stable_thresh = float(getattr(args, "hold_center_stable_thresh", 8.0))
         self.hold_center_in_hand = bool(getattr(args, "hold_center_in_hand", True))
         self.release_confirm_frames = int(getattr(args, "release_confirm_frames", 3))
+        self.hold_motion_similarity_thresh = float(getattr(args, "hold_motion_similarity_thresh", 6.0))
+        self.hold_motion_min_displacement = max(0.0, float(getattr(args, "hold_motion_min_displacement", 1.0)))
         self.virtual_door_manager = VirtualDoorManager(args)
         self.obj_classifier = ObjTrackClassifier(args)
         self.obj_classification_results: dict[int, dict[str, Any]] = {}
@@ -391,7 +397,11 @@ class HandObjBYTETracker(BYTETracker):
                 self._update_held_state(track, hand_by_id)
 
     def _update_held_state(self, track: HandObjTrack, hand_by_id: dict[int, HandObjTrack]) -> None:
-        """Confirm whether an object is currently hand-held before enabling hand anchoring."""
+        """Confirm whether an object is currently hand-held before enabling hand anchoring.
+
+        Requires both contact evidence (hand/obj spatial overlap) and motion similarity
+        (hand and obj displacement vectors are close) for consecutive frames.
+        """
         if track.last_hold_update_frame == self.frame_id:
             return
         track.last_hold_update_frame = self.frame_id
@@ -399,22 +409,33 @@ class HandObjBYTETracker(BYTETracker):
         if hand is None:
             track.hold_confirm_count = 0
             track.last_hand_obj_distance = None
+            track.last_hold_obj_xywh = None
+            track.last_hold_hand_xywh = None
             track.release_confirm_count += 1
             if track.release_confirm_count >= self.release_confirm_frames and track.anchor_enabled:
                 track.anchor_enabled = False
                 track.release_confirm_count = 0
-            if hand_by_id and track.anchor_hand_track_id is not None:
-                pass
             return
 
         distance = float(np.linalg.norm(track.xywh[:2] - hand.xywh[:2]))
-        distance_stable = (
-            track.last_hand_obj_distance is not None
-            and abs(distance - track.last_hand_obj_distance) <= self.hold_center_stable_thresh
-        )
         obj_center_in_hand = self._center_in_box(track.xywh[:2], hand.xyxy) if self.hold_center_in_hand else False
         hand_center_in_obj = self._center_in_box(hand.xywh[:2], track.xyxy)
-        is_held = obj_center_in_hand or hand_center_in_obj or distance_stable
+        contact_evidence = obj_center_in_hand or hand_center_in_obj
+
+        motion_similar = False
+        if track.last_hold_obj_xywh is not None and track.last_hold_hand_xywh is not None:
+            obj_delta = track.xywh[:2] - track.last_hold_obj_xywh[:2]
+            hand_delta = hand.xywh[:2] - track.last_hold_hand_xywh[:2]
+            delta_diff = float(np.linalg.norm(obj_delta - hand_delta))
+            obj_speed = float(np.linalg.norm(obj_delta))
+            hand_speed = float(np.linalg.norm(hand_delta))
+            enough_motion = obj_speed >= self.hold_motion_min_displacement
+            motion_similar = enough_motion and delta_diff <= self.hold_motion_similarity_thresh
+
+        is_held = contact_evidence and motion_similar
+
+        track.last_hold_obj_xywh = track.xywh.copy()
+        track.last_hold_hand_xywh = hand.xywh.copy()
 
         if is_held:
             track.hold_confirm_count += 1
