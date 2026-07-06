@@ -434,6 +434,7 @@ class HandObjBYTETracker(BYTETracker):
             if track.score < self.args.new_track_thresh:
                 continue
             track.activate(self.kalman_filter, self.frame_id)
+            track.is_activated = True  # activate immediately, bypass ByteTrack unconfirmed phase
             nearest_hand = self._nearest_hand(track, hands)
             track.bind_hand(nearest_hand, enable_anchor=False)
             activated.append(track)
