@@ -337,13 +337,47 @@ class HandObjBYTETracker(BYTETracker):
             return u_detection
 
         dists = self._anchored_dists(candidates, remaining, hand_by_id)
-        matches, _, unmatched_detection = matching.linear_assignment(dists, thresh=self.anchor_match_thresh)
+        matches, u_track_a, unmatched_detection = matching.linear_assignment(dists, thresh=self.anchor_match_thresh)
         for itracked, idet in matches:
             track = candidates[itracked]
             det = remaining[idet]
             track.re_activate(det, self.frame_id, new_id=False)
             self._update_held_state(track, hand_by_id)
             refind.append(track)
+
+        # Center-distance fallback for anchored tracks that drifted
+        if u_track_a and unmatched_detection:
+            still_anchored = [candidates[i] for i in u_track_a]
+            leftover_dets = [remaining[i] for i in unmatched_detection]
+            track_c = np.asarray([t.xywh[:2] for t in still_anchored], dtype=np.float32)
+            det_c = np.asarray([d.xywh[:2] for d in leftover_dets], dtype=np.float32)
+            cdist = np.linalg.norm(track_c[:, None, :] - det_c[None, :, :], axis=2)
+            c_matches, u_track_c, new_unmatched = matching.linear_assignment(cdist, thresh=self.obj_center_match_dist)
+            for itracked, idet in c_matches:
+                track = still_anchored[itracked]
+                det = leftover_dets[idet]
+                track.re_activate(det, self.frame_id, new_id=False)
+                self._update_held_state(track, hand_by_id)
+                refind.append(track)
+            # Anchored tracks still unmatched: check if they are ghosts near active tracks
+            for i in u_track_c:
+                ghost = still_anchored[i]
+                # If anchored track overlaps significantly with any active obj track, remove it
+                active_objs = [t for t in self.tracked_stracks
+                               if self._is_cls(t, self.obj_cls) and t.state == TrackState.Tracked]
+                is_ghost = bool(active_objs) and any(
+                    matching.iou_distance([ghost], [active])[0, 0] <= 1.0 - 0.3
+                    for active in active_objs
+                )
+                if is_ghost:
+                    ghost.mark_removed()
+                    try:
+                        self.lost_stracks.remove(ghost)
+                    except ValueError:
+                        pass
+                else:
+                    ghost.exit_anchor_mode()
+            unmatched_detection = [unmatched_detection[i] for i in new_unmatched]
         return [u_detection[i] for i in unmatched_detection]
 
     def _anchored_dists(
@@ -387,10 +421,18 @@ class HandObjBYTETracker(BYTETracker):
                 normal.append(track)
                 continue
 
+            # Ghost track: propagated >= 3 frames without ever matching a real detection
+            if track.anchor_lost_frames >= 3:
+                track.exit_anchor_mode()
+                normal.append(track)
+                continue
+
             if track.anchor_lost_frames >= self.anchor_track_buffer:
                 track.exit_anchor_mode()
                 normal.append(track)
                 continue
+
+            # Keep propagating only while hand is available
 
             # Use fallback mechanism to find hand
             hand = self._held_candidate_hand(track, hand_by_id)
