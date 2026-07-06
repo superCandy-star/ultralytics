@@ -1,8 +1,8 @@
 python tools/track_hand_obj_video.py \
   --weight /root/taojianwei/projects/ultralytics/runs/detect/runs/train/exp-21/weights/best.pt \
-  --video /root/taojianwei/datasets/IRIS/videos/20260706_videos/2026-07-03-17-40-10_cam0.mp4 \
+  --video /root/taojianwei/datasets/IRIS/videos/20260701_videos/20260701_zhao_videos/2026-07-01-17-10-10_cam0.mp4 \
   --output test.mp4 \
-  --conf 0.25 \
+  --conf 0.1 \
   --imgsz 640 \
   --virtual_door_enabled \
   --virtual_door_model /root/taojianwei/projects/ultralytics/runs/detect/runs/train/exp-13/weights/best.pt \

@@ -346,7 +346,7 @@ class HandObjBYTETracker(BYTETracker):
             refind.append(track)
 
         # Center-distance fallback for anchored tracks that drifted
-        if u_track_a and unmatched_detection:
+        if len(u_track_a) > 0 and len(unmatched_detection) > 0:
             still_anchored = [candidates[i] for i in u_track_a]
             leftover_dets = [remaining[i] for i in unmatched_detection]
             track_c = np.asarray([t.xywh[:2] for t in still_anchored], dtype=np.float32)
