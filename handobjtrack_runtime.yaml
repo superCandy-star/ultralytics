@@ -15,6 +15,8 @@ hold_center_stable_thresh: 8
 hold_center_in_hand: true
 release_confirm_frames: 3
 hold_motion_min_displacement: 1.0
+obj_center_match_dist: 200.0
+hand_center_match_dist: 100.0
 virtual_door_enabled: true
 virtual_door_model: /root/taojianwei/projects/ultralytics/runs/detect/runs/train/exp-13/weights/best.pt
 virtual_door_conf: 0.25

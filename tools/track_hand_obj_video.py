@@ -244,6 +244,7 @@ def main():
     parser.add_argument("--video", type=str, required=True, help="输入视频文件")
     parser.add_argument("--output", type=str, default="output.mp4", help="输出视频文件路径")
     parser.add_argument("--conf", type=float, default=0.5, help="置信度阈值")
+    parser.add_argument("--imgsz", type=int, default=None, help="推理尺寸（默认模型训练尺寸）")
     parser.add_argument("--hand_cls", type=int, default=None, help="hand类别ID，默认读取handobjtrack.yaml")
     parser.add_argument("--obj_cls", type=int, default=None, help="obj类别ID，默认读取handobjtrack.yaml")
     parser.add_argument("--anchor_track_buffer", type=int, default=None, help="obj丢检后由hand锚定传播的最大帧数")
@@ -325,6 +326,7 @@ def main():
     results = model.track(
         source=args.video,
         conf=args.conf,
+        imgsz=args.imgsz,
         tracker=tracker_yaml,
         persist=True,
         save=True,

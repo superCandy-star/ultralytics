@@ -130,6 +130,8 @@ class HandObjBYTETracker(BYTETracker):
         self.release_confirm_frames = int(getattr(args, "release_confirm_frames", 3))
         self.hold_motion_min_displacement = max(0.0, float(getattr(args, "hold_motion_min_displacement", 1.0)))
         self.anchored_lost_max_door_frames = int(getattr(args, "virtual_door_anchored_lost_max_frames", 2))
+        self.obj_center_match_dist = float(getattr(args, "obj_center_match_dist", 200.0))
+        self.hand_center_match_dist = float(getattr(args, "hand_center_match_dist", 100.0))
         self.virtual_door_manager = VirtualDoorManager(args)
         self.obj_classifier = ObjTrackClassifier(args)
         self.obj_classification_results: dict[int, dict[str, Any]] = {}
@@ -190,6 +192,11 @@ class HandObjBYTETracker(BYTETracker):
         self.multi_predict(strack_pool)
 
         u_track, u_detection = self._associate_first(strack_pool, detections, activated, refind)
+        # Center-distance fallback for hand / other classes missed by IoU matching
+        center_dist = self.hand_center_match_dist if cls == self.hand_cls else 100.0
+        u_track, u_detection = self._center_distance_fallback(
+            strack_pool, detections, u_track, u_detection, activated, refind, center_dist
+        )
         r_tracked = [strack_pool[i] for i in u_track if strack_pool[i].state == TrackState.Tracked]
         self._associate_second(r_tracked, detections_second, activated, refind, lost)
         u_detection, detections = self._unconfirmed_association(unconfirmed, u_detection, detections, activated, removed)
@@ -212,6 +219,10 @@ class HandObjBYTETracker(BYTETracker):
         self.multi_predict(strack_pool)
 
         u_track, u_detection = self._associate_first(strack_pool, detections, activated, refind)
+        # Center-distance fallback for obj tracks missed by IoU matching
+        u_track, u_detection = self._center_distance_fallback(
+            strack_pool, detections, u_track, u_detection, activated, refind, self.obj_center_match_dist
+        )
         self._update_held_states(activated, refind, hand_by_id)
 
         r_tracked = [strack_pool[i] for i in u_track if strack_pool[i].state == TrackState.Tracked]
@@ -236,6 +247,51 @@ class HandObjBYTETracker(BYTETracker):
         matches, u_track, u_detection = matching.linear_assignment(dists, thresh=self.args.match_thresh)
         self._apply_matches(matches, strack_pool, detections, activated, refind)
         return list(u_track), list(u_detection)
+
+    def _center_distance_fallback(
+        self,
+        strack_pool: list[HandObjTrack],
+        detections: list[HandObjTrack],
+        u_track: list[int],
+        u_detection: list[int],
+        activated: list[HandObjTrack],
+        refind: list[HandObjTrack],
+        max_dist: float,
+    ) -> tuple[list[int], list[int]]:
+        """Match unmatched tracks to unmatched detections using center-point distance.
+
+        Used as a fallback when IoU matching fails because the object moved
+        too far between consecutive frames (e.g. hand-held obj moving fast).
+        """
+        if not u_track or not u_detection or max_dist <= 0:
+            return u_track, u_detection
+
+        unmatched_tracks = [strack_pool[i] for i in u_track]
+        unmatched_dets = [detections[i] for i in u_detection]
+
+        track_centers = np.asarray([t.xywh[:2] for t in unmatched_tracks], dtype=np.float32)
+        det_centers = np.asarray([d.xywh[:2] for d in unmatched_dets], dtype=np.float32)
+        center_dists = np.linalg.norm(track_centers[:, None, :] - det_centers[None, :, :], axis=2)
+
+        # Gate: pairs with distance > max_dist get high cost
+        max_val = center_dists.max() * 2.0 + 1.0
+        gated = np.where(center_dists <= max_dist, center_dists, max_val)
+
+        matches, new_u_track, new_u_detection = matching.linear_assignment(gated, thresh=max_dist)
+        for itracked, idet in matches:
+            track = unmatched_tracks[itracked]
+            det = unmatched_dets[idet]
+            if track.state == TrackState.Tracked:
+                track.update(det, self.frame_id)
+                activated.append(track)
+            else:
+                track.re_activate(det, self.frame_id, new_id=False)
+                refind.append(track)
+
+        return (
+            [u_track[i] for i in new_u_track],
+            [u_detection[i] for i in new_u_detection],
+        )
 
     def _associate_second(
         self,
