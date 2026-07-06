@@ -129,6 +129,7 @@ class HandObjBYTETracker(BYTETracker):
         self.hold_center_in_hand = bool(getattr(args, "hold_center_in_hand", True))
         self.release_confirm_frames = int(getattr(args, "release_confirm_frames", 3))
         self.hold_motion_min_displacement = max(0.0, float(getattr(args, "hold_motion_min_displacement", 1.0)))
+        self.anchored_lost_max_door_frames = int(getattr(args, "virtual_door_anchored_lost_max_frames", 2))
         self.virtual_door_manager = VirtualDoorManager(args)
         self.obj_classifier = ObjTrackClassifier(args)
         self.obj_classification_results: dict[int, dict[str, Any]] = {}
@@ -595,7 +596,7 @@ class HandObjBYTETracker(BYTETracker):
                 and track.is_activated
                 and track.anchor_enabled
                 and track.anchor_mode
-                and track.anchor_lost_frames <= self.anchor_track_buffer
+                and track.anchor_lost_frames <= self.anchored_lost_max_door_frames
             )
         return object_tracks
 

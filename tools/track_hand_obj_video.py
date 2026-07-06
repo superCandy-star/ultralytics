@@ -211,6 +211,8 @@ def build_tracker_yaml(args, output_dir: Path) -> str:
         "virtual_door_position_tolerance": args.virtual_door_position_tolerance,
         "virtual_door_confirm_frames": args.virtual_door_confirm_frames,
         "virtual_door_front_direction": args.virtual_door_front_direction,
+        "virtual_door_include_anchored_lost": args.virtual_door_include_anchored_lost,
+        "virtual_door_anchored_lost_max_frames": args.virtual_door_anchored_lost_max_frames,
         "obj_classification_enabled": args.obj_classification_enabled,
         "obj_classification_model": args.obj_classification_model,
         "obj_classification_repo": args.obj_classification_repo,
@@ -269,6 +271,13 @@ def main():
     parser.add_argument("--virtual_door_stability_frames", type=int, default=None, help="虚拟门连续稳定确认帧数")
     parser.add_argument("--virtual_door_position_tolerance", type=float, default=None, help="虚拟门位置稳定像素容差")
     parser.add_argument("--virtual_door_confirm_frames", type=int, default=None, help="物体进出状态转换确认帧数")
+    parser.add_argument("--virtual_door_anchored_lost_max_frames", type=int, default=None, help="synthetic box参与门事件的最大传播帧数")
+    parser.add_argument(
+        "--virtual_door_include_anchored_lost",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="是否让hand-anchor传播的synthetic box参与虚拟门事件判断",
+    )
     parser.add_argument(
         "--virtual_door_front_direction",
         choices=["y_greater_inside", "y_less_inside", "x_less_inside", "x_greater_inside"],

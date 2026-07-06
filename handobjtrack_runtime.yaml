@@ -34,7 +34,8 @@ virtual_door_front_direction: y_greater_inside
 virtual_door_front_margin: 3.0
 virtual_door_track_prune_frames: 120
 virtual_door_fail_open: true
-virtual_door_include_anchored_lost: false
+virtual_door_include_anchored_lost: true
+virtual_door_anchored_lost_max_frames: 2
 obj_classification_enabled: true
 obj_classification_model: /root/taojianwei/projects/mobilenetv3.pytorch-master/runs/obj_cls/mobilenetv3_small_224/best.pt
 obj_classification_repo: /root/taojianwei/projects/mobilenetv3.pytorch-master

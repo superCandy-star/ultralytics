@@ -7,4 +7,5 @@ python tools/track_hand_obj_video.py \
   --virtual_door_model /root/taojianwei/projects/ultralytics/runs/detect/runs/train/exp-13/weights/best.pt \
   --obj_classification_enabled \
   --hold_confirm_frames 2 \
+  --virtual_door_include_anchored_lost \
   --obj_classification_model /root/taojianwei/projects/mobilenetv3.pytorch-master/runs/obj_cls/mobilenetv3_small_224/best.pt

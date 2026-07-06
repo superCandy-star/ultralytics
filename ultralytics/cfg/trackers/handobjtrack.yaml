@@ -42,6 +42,7 @@ virtual_door_front_margin: 3.0 # (float) Deadband around front door line where s
 virtual_door_track_prune_frames: 120 # (int) Frames before stale per-track door state is removed
 virtual_door_fail_open: True # (bool) Disable door events instead of raising if initialization/model fails
 virtual_door_include_anchored_lost: False # (bool) Include hand-propagated synthetic object boxes in door event logic
+virtual_door_anchored_lost_max_frames: 2 # (int) Max anchor_lost_frames for synthetic boxes to participate in door events
 
 # Track-level object classification for virtual-door events
 obj_classification_enabled: False # (bool) Enable MobileNetV3 track-level classification for obj tracks
