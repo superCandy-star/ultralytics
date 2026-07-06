@@ -201,6 +201,7 @@ def build_tracker_yaml(args, output_dir: Path) -> str:
         "hold_confirm_frames": args.hold_confirm_frames,
         "hold_center_stable_thresh": args.hold_center_stable_thresh,
         "hold_center_in_hand": args.hold_center_in_hand,
+        "hold_motion_min_displacement": args.hold_motion_min_displacement,
         "virtual_door_enabled": args.virtual_door_enabled,
         "virtual_door_model": args.virtual_door_model,
         "virtual_door_conf": args.virtual_door_conf,
@@ -254,6 +255,7 @@ def main():
         default=None,
         help="是否将obj中心在hand框内作为手持证据",
     )
+    parser.add_argument("--hold_motion_min_displacement", type=float, default=None, help="obj自身移动最小像素阈值")
     parser.add_argument(
         "--virtual_door_enabled",
         action=argparse.BooleanOptionalAction,

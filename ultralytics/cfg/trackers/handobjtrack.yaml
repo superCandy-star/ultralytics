@@ -15,12 +15,11 @@ obj_cls: 1 # (int) Class id used for object detections
 anchor_track_buffer: 15 # (int) Max frames an object can be propagated by its bound hand
 anchor_max_bind_distance: 150 # (float) Max center distance in pixels when binding a new object to a hand; <=0 disables
 anchor_match_thresh: 0.8 # (float) Cost threshold when matching detections back to anchored-lost objects
-hold_confirm_frames: 3 # (int) Consecutive frames of contact+motion evidence required before enabling hand anchoring
+hold_confirm_frames: 2 # (int) Consecutive frames of contact+motion evidence required before enabling hand anchoring
 hold_center_stable_thresh: 8 # (float) Max frame-to-frame change in hand-object center distance to treat as held
 hold_center_in_hand: True # (bool) Treat obj center inside hand box as hand-held evidence
 release_confirm_frames: 3 # (int) Consecutive frames of no hand-held evidence before disabling anchor
-hold_motion_similarity_thresh: 6.0 # (float) Max px/frame difference between hand and obj displacement vectors for motion similarity
-hold_motion_min_displacement: 1.0 # (float) Min hand or obj movement (px/frame) before motion similarity counts as evidence
+hold_motion_min_displacement: 1.0 # (float) Min obj movement (px/frame) before counting as "obj started moving"
 
 # Virtual door event detection (disabled by default; does not change tracker output rows)
 virtual_door_enabled: False # (bool) Enable smart-fridge virtual door put_in/take_out event detection

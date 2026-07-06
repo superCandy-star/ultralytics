@@ -78,7 +78,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='清理没有配对图片的 json，以及 label 为空的 json 和对应图片')
     parser.add_argument(
         '--folder',
-        default='/root/taojianwei/datasets/IRIS/20260702_datasets/tmp/20260701_datasets',
+        default='/root/taojianwei/datasets/IRIS/20260703_datasets',
         help='需要清理的数据集文件夹',
     )
     parser.add_argument('--delete', action='store_true', help='实际删除文件；不加该参数时只预览')

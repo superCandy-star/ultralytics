@@ -10,11 +10,10 @@ obj_cls: 1
 anchor_track_buffer: 15
 anchor_max_bind_distance: 150
 anchor_match_thresh: 0.8
-hold_confirm_frames: 3
+hold_confirm_frames: 2
 hold_center_stable_thresh: 8
 hold_center_in_hand: true
 release_confirm_frames: 3
-hold_motion_similarity_thresh: 6.0
 hold_motion_min_displacement: 1.0
 virtual_door_enabled: true
 virtual_door_model: /root/taojianwei/projects/ultralytics/runs/detect/runs/train/exp-13/weights/best.pt

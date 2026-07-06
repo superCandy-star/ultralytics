@@ -1,9 +1,10 @@
 python tools/track_hand_obj_video.py \
-  --weight /root/taojianwei/projects/ultralytics/runs/detect/runs/train/exp-19/weights/best.pt \
+  --weight /root/taojianwei/projects/ultralytics/runs/detect/runs/train/exp-21/weights/best.pt \
   --video /root/taojianwei/datasets/IRIS/videos/20260701_videos/20260701_zhao_videos/2026-07-01-17-20-10_cam0.mp4 \
   --output test.mp4 \
   --conf 0.25 \
   --virtual_door_enabled \
   --virtual_door_model /root/taojianwei/projects/ultralytics/runs/detect/runs/train/exp-13/weights/best.pt \
   --obj_classification_enabled \
+  --hold_confirm_frames 2 \
   --obj_classification_model /root/taojianwei/projects/mobilenetv3.pytorch-master/runs/obj_cls/mobilenetv3_small_224/best.pt

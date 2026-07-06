@@ -212,8 +212,8 @@ def write_class_index(output_dir: Path, labels: list[str]) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description="Crop LabelMe annotations into classification folders")
-    parser.add_argument("--source", type=str, default="/root/taojianwei/datasets/IRIS/20260702_datasets", help="LabelMe JSON/image directory")
-    parser.add_argument("--output", type=str, default="/root/taojianwei/datasets/IRIS/20260702_datasets_cls_crops", help="Output ImageFolder dataset directory")
+    parser.add_argument("--source", type=str, default="/root/taojianwei/datasets/IRIS/20260703_datasets", help="LabelMe JSON/image directory")
+    parser.add_argument("--output", type=str, default="/root/taojianwei/datasets/IRIS/20260703_datasets_cls_crop", help="Output ImageFolder dataset directory")
     parser.add_argument("--train_ratio", type=float, default=0.9, help="Train split ratio per class")
     parser.add_argument("--seed", type=int, default=42, help="Random split seed")
     parser.add_argument("--target_min_dim", type=int, default=160, help="Minimum square crop side before resizing")
