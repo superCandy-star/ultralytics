@@ -52,9 +52,7 @@ obj_classification_model: /root/taojianwei/projects/mobilenetv3.pytorch-master/r
 obj_classification_repo: /root/taojianwei/projects/mobilenetv3.pytorch-master # (str) Repo containing mobilenetv3.py
 obj_classification_device: null # (str) Optional torch device, e.g. cuda:0 or cpu
 obj_classification_input_size: 224 # (int) Classifier input size; checkpoint input_size takes precedence
-obj_classification_target_min_dim: 160 # (float) Minimum obj-centered crop side before resize
-obj_classification_context_scale: 2.0 # (float) Crop side = max(obj long side * scale, target_min_dim)
-obj_classification_max_context_ratio: 4.0 # (float) Maximum crop side relative to obj long side
+obj_classification_crop_bias: 5.0 # (float) Fixed pixel bias expansion around tight obj bbox on each side
 obj_classification_min_track_len: 8 # (int) Shorter tracks fall back to global diverse key-frame selection
 obj_classification_max_samples: 120 # (int) Max crop samples cached per track
 obj_classification_max_frames_per_phase: 2 # (int) Key frames selected per phase

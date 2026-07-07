@@ -30,7 +30,7 @@ virtual_door_init_frames: 30
 virtual_door_stability_frames: 5
 virtual_door_position_tolerance: 10.0
 virtual_door_side_iou_tolerance: 0.8
-virtual_door_confirm_frames: 2
+virtual_door_confirm_frames: 5
 virtual_door_unknown_confirm_frames: 1
 virtual_door_front_direction: y_greater_inside
 virtual_door_front_margin: 3.0

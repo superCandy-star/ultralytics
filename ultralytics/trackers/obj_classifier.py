@@ -64,9 +64,7 @@ class ObjTrackClassifier:
             getattr(args, "obj_classification_repo", "/root/taojianwei/projects/mobilenetv3.pytorch-master")
         )
         self.device_arg = getattr(args, "obj_classification_device", None)
-        self.target_min_dim = float(getattr(args, "obj_classification_target_min_dim", 160.0))
-        self.context_scale = float(getattr(args, "obj_classification_context_scale", 2.0))
-        self.max_context_ratio = float(getattr(args, "obj_classification_max_context_ratio", 4.0))
+        self.crop_bias = float(getattr(args, "obj_classification_crop_bias", 5.0))
         self.min_track_len = max(1, int(getattr(args, "obj_classification_min_track_len", 8)))
         self.max_samples = max(1, int(getattr(args, "obj_classification_max_samples", 120)))
         self.max_frames_per_phase = max(1, int(getattr(args, "obj_classification_max_frames_per_phase", 2)))
@@ -279,37 +277,20 @@ class ObjTrackClassifier:
             self._load_failed = True
 
     def _crop_track_image(self, img: np.ndarray, xyxy: np.ndarray) -> Image.Image:
-        """Build an obj-centered adaptive crop from the current BGR frame."""
-        crop_box = self._build_obj_centered_crop_box(xyxy)
+        """Build a bias-expanded crop from the current BGR frame and resize to model input size."""
         rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         image = Image.fromarray(rgb)
-        crop = self._crop_with_padding(image, crop_box)
-        return crop.resize((self.input_size, self.input_size), Image.BILINEAR)
-
-    def _build_obj_centered_crop_box(self, xyxy: np.ndarray) -> tuple[float, float, float, float]:
         x1, y1, x2, y2 = [float(v) for v in xyxy]
-        obj_w, obj_h = x2 - x1, y2 - y1
-        obj_long_side = max(obj_w, obj_h)
-        cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
-        crop_size = max(obj_long_side * self.context_scale, self.target_min_dim)
-        max_crop_size = max(obj_long_side * self.max_context_ratio, self.target_min_dim)
-        crop_size = min(crop_size, max_crop_size)
-        half = crop_size / 2.0
-        return cx - half, cy - half, cx + half, cy + half
-
-    @staticmethod
-    def _crop_with_padding(image: Image.Image, crop_box: tuple[float, float, float, float], fill=(114, 114, 114)):
-        x1, y1, x2, y2 = crop_box
-        left, top = int(round(x1)), int(round(y1))
-        right, bottom = int(round(x2)), int(round(y2))
-        pad_left = max(0, -left)
-        pad_top = max(0, -top)
-        pad_right = max(0, right - image.width)
-        pad_bottom = max(0, bottom - image.height)
-        clipped = image.crop((max(0, left), max(0, top), min(image.width, right), min(image.height, bottom)))
-        if any((pad_left, pad_top, pad_right, pad_bottom)):
-            clipped = ImageOps.expand(clipped, border=(pad_left, pad_top, pad_right, pad_bottom), fill=fill)
-        return clipped
+        x1 = max(0, x1 - self.crop_bias)
+        y1 = max(0, y1 - self.crop_bias)
+        x2 = min(image.width - 1, x2 + self.crop_bias)
+        y2 = min(image.height - 1, y2 + self.crop_bias)
+        if x2 <= x1:
+            x2 = x1 + 1
+        if y2 <= y1:
+            y2 = y1 + 1
+        crop = image.crop((int(x1), int(y1), int(x2), int(y2)))
+        return crop.resize((self.input_size, self.input_size), Image.BILINEAR)
 
     def _annotate_motion(self, samples: list[ObjClassificationSample]) -> None:
         speeds = [0.0]

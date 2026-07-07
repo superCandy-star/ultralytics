@@ -235,9 +235,7 @@ def build_tracker_yaml(args, output_dir: Path) -> str:
         "obj_classification_model": args.obj_classification_model,
         "obj_classification_repo": args.obj_classification_repo,
         "obj_classification_device": args.obj_classification_device,
-        "obj_classification_target_min_dim": args.obj_classification_target_min_dim,
-        "obj_classification_context_scale": args.obj_classification_context_scale,
-        "obj_classification_max_context_ratio": args.obj_classification_max_context_ratio,
+        "obj_classification_crop_bias": args.obj_classification_crop_bias,
         "obj_classification_max_frames_per_phase": args.obj_classification_max_frames_per_phase,
         "obj_classification_min_frame_gap": args.obj_classification_min_frame_gap,
         "obj_classification_input_size": args.obj_classification_input_size,
@@ -343,9 +341,7 @@ def main():
     parser.add_argument("--obj_classification_model", type=str, default=None, help="MobileNetV3分类模型best.pt路径")
     parser.add_argument("--obj_classification_repo", type=str, default=None, help="mobilenetv3.py所在仓库路径")
     parser.add_argument("--obj_classification_device", type=str, default=None, help="分类模型推理设备，如cuda:0或cpu")
-    parser.add_argument("--obj_classification_target_min_dim", type=float, default=None, help="obj-centered crop最小边长")
-    parser.add_argument("--obj_classification_context_scale", type=float, default=None, help="obj长边上下文扩展倍率")
-    parser.add_argument("--obj_classification_max_context_ratio", type=float, default=None, help="crop最大上下文倍率")
+    parser.add_argument("--obj_classification_crop_bias", type=float, default=None, help="分类crop每侧固定外扩像素（默认5）")
     parser.add_argument("--obj_classification_max_frames_per_phase", type=int, default=None, help="每个阶段最多选择的关键帧数")
     parser.add_argument("--obj_classification_min_frame_gap", type=int, default=None, help="分类关键帧最小间隔")
     parser.add_argument("--obj_classification_input_size", type=int, default=None, help="分类器输入尺寸")
@@ -439,6 +435,10 @@ def main():
             print(f"虚拟门事件数量: {len(events)}")
             for event in events:
                 print(event)
+
+        # Reset tracker state between videos to avoid cross-video pollution
+        if tracker is not None:
+            tracker.reset()
 
 
 if __name__ == "__main__":
