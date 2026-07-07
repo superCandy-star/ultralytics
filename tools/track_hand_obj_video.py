@@ -202,6 +202,14 @@ def build_tracker_yaml(args, output_dir: Path) -> str:
         "hold_center_stable_thresh": args.hold_center_stable_thresh,
         "hold_center_in_hand": args.hold_center_in_hand,
         "hold_motion_min_displacement": args.hold_motion_min_displacement,
+        "obj_center_match_dist": args.obj_center_match_dist,
+        "hand_center_match_dist": args.hand_center_match_dist,
+        "release_confirm_frames": args.release_confirm_frames,
+        "track_high_thresh": args.track_high_thresh,
+        "track_low_thresh": args.track_low_thresh,
+        "new_track_thresh": args.new_track_thresh,
+        "match_thresh": args.match_thresh,
+        "track_buffer": args.track_buffer,
         "virtual_door_enabled": args.virtual_door_enabled,
         "virtual_door_model": args.virtual_door_model,
         "virtual_door_conf": args.virtual_door_conf,
@@ -209,10 +217,20 @@ def build_tracker_yaml(args, output_dir: Path) -> str:
         "virtual_door_init_frames": args.virtual_door_init_frames,
         "virtual_door_stability_frames": args.virtual_door_stability_frames,
         "virtual_door_position_tolerance": args.virtual_door_position_tolerance,
+        "virtual_door_side_iou_tolerance": args.virtual_door_side_iou_tolerance,
         "virtual_door_confirm_frames": args.virtual_door_confirm_frames,
         "virtual_door_front_direction": args.virtual_door_front_direction,
         "virtual_door_include_anchored_lost": args.virtual_door_include_anchored_lost,
         "virtual_door_anchored_lost_max_frames": args.virtual_door_anchored_lost_max_frames,
+        "virtual_door_front_margin": args.virtual_door_front_margin,
+        "virtual_door_unknown_confirm_frames": args.virtual_door_unknown_confirm_frames,
+        "virtual_door_track_prune_frames": args.virtual_door_track_prune_frames,
+        "virtual_door_fail_open": args.virtual_door_fail_open,
+        "virtual_door_device": args.virtual_door_device,
+        "virtual_door_verbose": args.virtual_door_verbose,
+        "virtual_door_side_cabinet_cls": args.virtual_door_side_cabinet_cls,
+        "virtual_door_junction_cls": args.virtual_door_junction_cls,
+        "virtual_door_cabinet_cls": args.virtual_door_cabinet_cls,
         "obj_classification_enabled": args.obj_classification_enabled,
         "obj_classification_model": args.obj_classification_model,
         "obj_classification_repo": args.obj_classification_repo,
@@ -222,6 +240,16 @@ def build_tracker_yaml(args, output_dir: Path) -> str:
         "obj_classification_max_context_ratio": args.obj_classification_max_context_ratio,
         "obj_classification_max_frames_per_phase": args.obj_classification_max_frames_per_phase,
         "obj_classification_min_frame_gap": args.obj_classification_min_frame_gap,
+        "obj_classification_input_size": args.obj_classification_input_size,
+        "obj_classification_max_samples": args.obj_classification_max_samples,
+        "obj_classification_min_track_len": args.obj_classification_min_track_len,
+        "obj_classification_move_speed_thresh": args.obj_classification_move_speed_thresh,
+        "obj_classification_stable_speed_thresh": args.obj_classification_stable_speed_thresh,
+        "obj_classification_move_confirm_frames": args.obj_classification_move_confirm_frames,
+        "obj_classification_stable_confirm_frames": args.obj_classification_stable_confirm_frames,
+        "obj_classification_speed_norm": args.obj_classification_speed_norm,
+        "obj_classification_area_full_ratio": args.obj_classification_area_full_ratio,
+        "obj_classification_bbox_iou_diversity_thresh": args.obj_classification_bbox_iou_diversity_thresh,
     }
     overrides = {k: v for k, v in overrides.items() if v is not None}
 
@@ -250,6 +278,11 @@ def main():
     parser.add_argument("--anchor_track_buffer", type=int, default=None, help="obj丢检后由hand锚定传播的最大帧数")
     parser.add_argument("--anchor_max_bind_distance", type=float, default=None, help="新obj绑定hand的最大中心距离像素")
     parser.add_argument("--anchor_match_thresh", type=float, default=None, help="anchored-lost obj重关联匹配阈值")
+    parser.add_argument("--track_high_thresh", type=float, default=None, help="ByteTrack 高分检测阈值")
+    parser.add_argument("--track_low_thresh", type=float, default=None, help="ByteTrack 低分检测阈值")
+    parser.add_argument("--new_track_thresh", type=float, default=None, help="新建 track 的最低置信度")
+    parser.add_argument("--match_thresh", type=float, default=None, help="ByteTrack IoU 匹配阈值")
+    parser.add_argument("--track_buffer", type=int, default=None, help="丢失 track 最长保留帧数")
     parser.add_argument("--hold_confirm_frames", type=int, default=None, help="确认手持所需的连续真实检测帧数")
     parser.add_argument("--hold_center_stable_thresh", type=float, default=None, help="手-物中心距离变化小于该值时认为相对稳定")
     parser.add_argument(
@@ -259,6 +292,9 @@ def main():
         help="是否将obj中心在hand框内作为手持证据",
     )
     parser.add_argument("--hold_motion_min_displacement", type=float, default=None, help="obj自身移动最小像素阈值")
+    parser.add_argument("--obj_center_match_dist", type=float, default=None, help="obj 中心距离匹配阈值(px)")
+    parser.add_argument("--hand_center_match_dist", type=float, default=None, help="hand 中心距离匹配阈值(px)")
+    parser.add_argument("--release_confirm_frames", type=int, default=None, help="释放 anchor 所需连续无手持证据帧数")
     parser.add_argument(
         "--virtual_door_enabled",
         action=argparse.BooleanOptionalAction,
@@ -271,6 +307,16 @@ def main():
     parser.add_argument("--virtual_door_init_frames", type=int, default=None, help="虚拟门初始化最大帧数")
     parser.add_argument("--virtual_door_stability_frames", type=int, default=None, help="虚拟门连续稳定确认帧数")
     parser.add_argument("--virtual_door_position_tolerance", type=float, default=None, help="虚拟门位置稳定像素容差")
+    parser.add_argument("--virtual_door_side_iou_tolerance", type=float, default=None, help="侧边门IoU聚类容忍度")
+    parser.add_argument("--virtual_door_front_margin", type=float, default=None, help="正前方虚拟门边界死区像素")
+    parser.add_argument("--virtual_door_unknown_confirm_frames", type=int, default=None, help="UNKNOWN 状态初始化确认帧数")
+    parser.add_argument("--virtual_door_track_prune_frames", type=int, default=None, help="track 消失后状态清理帧数")
+    parser.add_argument("--virtual_door_side_cabinet_cls", type=str, default=None, help="门模型 side_cabinet 类别名或ID")
+    parser.add_argument("--virtual_door_junction_cls", type=str, default=None, help="门模型 junction 类别名或ID")
+    parser.add_argument("--virtual_door_cabinet_cls", type=str, default=None, help="门模型 cabinet 类别名或ID")
+    parser.add_argument("--virtual_door_device", type=str, default=None, help="门模型推理设备")
+    parser.add_argument("--virtual_door_verbose", action=argparse.BooleanOptionalAction, default=None, help="门模型推理详细日志")
+    parser.add_argument("--virtual_door_fail_open", action=argparse.BooleanOptionalAction, default=None, help="门初始化失败时不影响跟踪")
     parser.add_argument("--virtual_door_confirm_frames", type=int, default=None, help="物体进出状态转换确认帧数")
     parser.add_argument("--virtual_door_anchored_lost_max_frames", type=int, default=None, help="synthetic box参与门事件的最大传播帧数")
     parser.add_argument(
@@ -299,6 +345,16 @@ def main():
     parser.add_argument("--obj_classification_max_context_ratio", type=float, default=None, help="crop最大上下文倍率")
     parser.add_argument("--obj_classification_max_frames_per_phase", type=int, default=None, help="每个阶段最多选择的关键帧数")
     parser.add_argument("--obj_classification_min_frame_gap", type=int, default=None, help="分类关键帧最小间隔")
+    parser.add_argument("--obj_classification_input_size", type=int, default=None, help="分类器输入尺寸")
+    parser.add_argument("--obj_classification_max_samples", type=int, default=None, help="每 track 最大缓存样本数")
+    parser.add_argument("--obj_classification_min_track_len", type=int, default=None, help="最短 track 长度（短于此走全局选帧）")
+    parser.add_argument("--obj_classification_move_speed_thresh", type=float, default=None, help="移动阶段速度阈值(px/frame)")
+    parser.add_argument("--obj_classification_stable_speed_thresh", type=float, default=None, help="放下阶段速度阈值(px/frame)")
+    parser.add_argument("--obj_classification_move_confirm_frames", type=int, default=None, help="移动开始确认帧数")
+    parser.add_argument("--obj_classification_stable_confirm_frames", type=int, default=None, help="移动结束确认帧数")
+    parser.add_argument("--obj_classification_speed_norm", type=float, default=None, help="速度归一化参考值")
+    parser.add_argument("--obj_classification_area_full_ratio", type=float, default=None, help="面积满分参考比例")
+    parser.add_argument("--obj_classification_bbox_iou_diversity_thresh", type=float, default=None, help="关键帧框多样性 IoU 阈值")
     args = parser.parse_args()
 
     if not Path(args.video).exists():

@@ -94,6 +94,8 @@ class VirtualDoorManager:
         self.side_doors: dict[str, np.ndarray] = {}
         self.locked_frame_id: int | None = None
         self.object_states: dict[int, ObjectDoorState] = {}
+        self._last_side_door_n = 0
+        self._side_door_stable_count = 0
 
     def reset(self) -> None:
         """Reset all door geometry and per-track state for a new source/video."""
@@ -108,6 +110,8 @@ class VirtualDoorManager:
         self.side_doors = {}
         self.locked_frame_id = None
         self.object_states = {}
+        self._last_side_door_n = 0
+        self._side_door_stable_count = 0
 
     def update(self, frame_id: int, img: np.ndarray | None, object_tracks: list[Any]) -> list[dict[str, Any]]:
         """Update virtual-door initialization and return events generated in this frame."""
@@ -146,11 +150,14 @@ class VirtualDoorManager:
             self._observations.append(observation)
             self._observations = self._observations[-self.stability_frames :]
             self._try_lock(frame_id)
-        else:
-            self._observations = []
+        # Keep recent observations even when a single frame has no detection;
+        # an empty observation is appended so that the frame counter still
+        # advances but a single gap does not reset the stability window.
 
         if not self.locked and self._init_seen >= self.init_frames:
-            self._handle_failure("Virtual door initialization timed out before stable geometry was detected.")
+            self._fallback_lock(frame_id)
+            if not self.locked:
+                self._handle_failure("Virtual door initialization timed out before stable geometry was detected.")
 
     def _observe_doors(self, frame_id: int, img: np.ndarray) -> DoorObservation | None:
         """Run the virtual-door detector once and extract the best door observations."""
@@ -271,7 +278,12 @@ class VirtualDoorManager:
         return xyxy[best]
 
     def _try_lock(self, frame_id: int) -> None:
-        """Lock stable virtual-door geometry from recent observations."""
+        """Lock stable virtual-door geometry from recent observations.
+
+        Front and side doors are locked independently.  If side-cabinet boxes
+        have been observed in any recent frame, the side doors must also be
+        stable before locking; otherwise front alone may lock immediately.
+        """
         recent = self._observations[-self.stability_frames :]
         if len(recent) < self.stability_frames:
             return
@@ -281,7 +293,24 @@ class VirtualDoorManager:
             max(front_values) - min(front_values) <= self.position_tolerance
         )
         side_doors = self._lock_side_doors(recent)
-        if not front_locked and not side_doors:
+
+        # If side boxes have EVER been observed, wait until side doors are also stable
+        any_side = any(len(obs.side_boxes) > 0 for obs in recent)
+        if any_side and not side_doors:
+            return   # side boxes seen but no stable side door yet
+
+        # Once side doors appear, wait until the count stabilises
+        if any_side and side_doors:
+            n = len(side_doors)
+            if n != self._last_side_door_n:
+                self._last_side_door_n = n
+                self._side_door_stable_count = 0
+                return
+            self._side_door_stable_count += 1
+            if self._side_door_stable_count < self.stability_frames:
+                return
+
+        if not front_locked:
             return
 
         self.front_y = None
@@ -298,6 +327,72 @@ class VirtualDoorManager:
         self.locked_frame_id = frame_id
         self._model = None
 
+    def _fallback_lock(self, frame_id: int) -> None:
+        """At timeout, lock with whatever side-door evidence has been collected.
+
+        The front door is locked from recent stable observations (same as
+        ``_try_lock``).  For side doors the full observation history is
+        clustered using a relaxed IoU threshold so that boxes that nearly
+        stabilised are still captured.  If ANY side boxes were ever seen, the
+        fallback median is used; otherwise side_doors stays empty.
+        """
+        recent = self._observations[-self.stability_frames :]
+        front_values = [obs.front_y for obs in recent if obs.front_y is not None]
+        if len(front_values) >= self.stability_frames and (
+            max(front_values) - min(front_values) <= self.position_tolerance
+        ):
+            self.front_y = float(np.median(np.asarray(front_values, dtype=np.float32)))
+            front_obs = [obs for obs in recent if obs.front_y is not None][-1]
+            if front_obs.junction_xyxy is not None:
+                self.front_source["junction_xyxy"] = self._box_to_list(front_obs.junction_xyxy)
+            if front_obs.cabinet_xyxy is not None:
+                self.front_source["cabinet_xyxy"] = self._box_to_list(front_obs.cabinet_xyxy)
+
+        # Relaxed side-door clustering from ALL observations
+        relaxed_iou = max(0.3, self.side_iou_tolerance - 0.3)
+        all_entries: list[tuple[int, np.ndarray]] = []
+        for obs in self._observations:
+            all_entries.extend((obs.frame_id, box) for box in obs.side_boxes)
+        if all_entries:
+            clusters = self._cluster_boxes(all_entries, relaxed_iou)
+            locked: list[np.ndarray] = []
+            for cluster in clusters:
+                seen = {item[0] for item in cluster}
+                if len(seen) >= max(2, self.stability_frames // 2):
+                    locked.append(np.median(np.asarray([item[1] for item in cluster], dtype=np.float32), axis=0))
+            locked.sort(key=lambda b: (float(b[0]), float(b[1]), float(b[2]), float(b[3])))
+            if locked:
+                self.side_doors = {f"side_{i}": b.astype(np.float32) for i, b in enumerate(locked)}
+
+        # Ultimate fallback: use the last frame's side_cabinet detections directly
+        if not self.side_doors and self._observations:
+            last_obs = self._observations[-1]
+            if last_obs.side_boxes:
+                boxes = sorted(last_obs.side_boxes, key=lambda b: (float(b[0]), float(b[1]), float(b[2]), float(b[3])))
+                self.side_doors = {f"side_{i}": b.astype(np.float32) for i, b in enumerate(boxes)}
+
+        if self.front_y is not None or self.side_doors:
+            self.locked = True
+            self.locked_frame_id = frame_id
+            self._model = None
+
+    @staticmethod
+    def _cluster_boxes(entries: list[tuple[int, np.ndarray]], iou_thresh: float) -> list[list[tuple[int, np.ndarray]]]:
+        """Cluster (frame_id, xyxy) pairs by IoU threshold."""
+        clusters: list[list[tuple[int, np.ndarray]]] = []
+        for frame_id, box in entries:
+            matched = None
+            for cluster in clusters:
+                rep = np.median(np.asarray([item[1] for item in cluster], dtype=np.float32), axis=0)
+                if VirtualDoorManager._bbox_iou(rep, box) >= iou_thresh:
+                    matched = cluster
+                    break
+            if matched is None:
+                clusters.append([(frame_id, box)])
+            else:
+                matched.append((frame_id, box))
+        return clusters
+
     def _lock_side_doors(self, observations: list[DoorObservation]) -> dict[str, np.ndarray]:
         """Cluster stable side-cabinet boxes and assign deterministic side door IDs."""
         entries: list[tuple[int, np.ndarray]] = []
@@ -306,19 +401,7 @@ class VirtualDoorManager:
         if not entries:
             return {}
 
-        clusters: list[list[tuple[int, np.ndarray]]] = []
-        for frame_id, box in entries:
-            matched = None
-            for cluster in clusters:
-                rep = np.median(np.asarray([item[1] for item in cluster], dtype=np.float32), axis=0)
-                if self._bbox_iou(rep, box) >= self.side_iou_tolerance:
-                    matched = cluster
-                    break
-            if matched is None:
-                clusters.append([(frame_id, box)])
-            else:
-                matched.append((frame_id, box))
-
+        clusters = self._cluster_boxes(entries, self.side_iou_tolerance)
         locked_boxes: list[np.ndarray] = []
         for cluster in clusters:
             seen_frames = {item[0] for item in cluster}
