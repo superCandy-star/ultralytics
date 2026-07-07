@@ -260,7 +260,8 @@ def build_tracker_yaml(args, output_dir: Path) -> str:
         tracker_cfg = yaml.safe_load(f)
     tracker_cfg.update(overrides)
 
-    runtime_tracker = output_dir / "handobjtrack_runtime.yaml"
+    import tempfile
+    runtime_tracker = Path(tempfile.mktemp(suffix=".yaml", prefix="handobjtrack_runtime_"))
     with open(runtime_tracker, "w", encoding="utf-8") as f:
         yaml.safe_dump(tracker_cfg, f, sort_keys=False, allow_unicode=True)
     return str(runtime_tracker)
@@ -269,8 +270,10 @@ def build_tracker_yaml(args, output_dir: Path) -> str:
 def main():
     parser = argparse.ArgumentParser(description="YOLOv11 hand-object anchored 视频跟踪")
     parser.add_argument("--weight", type=str, required=True, help="模型权重文件")
-    parser.add_argument("--video", type=str, required=True, help="输入视频文件")
-    parser.add_argument("--output", type=str, default="output.mp4", help="输出视频文件路径")
+    parser.add_argument("--video", type=str, default=None, help="输入视频文件")
+    parser.add_argument("--video_dir", type=str, default=None, help="输入视频文件夹（批量推理）")
+    parser.add_argument("--output", type=str, default=None, help="输出视频文件名（默认：视频名_inference.mp4）")
+    parser.add_argument("--output_dir", type=str, default=None, help="输出视频保存文件夹（默认：当前目录）")
     parser.add_argument("--conf", type=float, default=0.5, help="置信度阈值")
     parser.add_argument("--imgsz", type=int, default=None, help="推理尺寸（默认模型训练尺寸）")
     parser.add_argument("--hand_cls", type=int, default=None, help="hand类别ID，默认读取handobjtrack.yaml")
@@ -357,9 +360,6 @@ def main():
     parser.add_argument("--obj_classification_bbox_iou_diversity_thresh", type=float, default=None, help="关键帧框多样性 IoU 阈值")
     args = parser.parse_args()
 
-    if not Path(args.video).exists():
-        print(f"错误: 视频文件不存在: {args.video}")
-        return
     if not Path(args.weight).exists():
         print(f"错误: 权重文件不存在: {args.weight}")
         return
@@ -367,51 +367,78 @@ def main():
         print(f"错误: tracker配置不存在: {DEFAULT_TRACKER}")
         return
 
-    output_path = Path(args.output)
-    output_dir = output_path.parent if output_path.parent != Path(".") else Path(".")
-    output_name = output_path.name
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    tracker_yaml = build_tracker_yaml(args, output_dir)
+    # Collect video files
+    video_files = []
+    if args.video:
+        if not Path(args.video).exists():
+            print(f"错误: 视频文件不存在: {args.video}")
+            return
+        video_files.append(Path(args.video))
+    if args.video_dir:
+        vdir = Path(args.video_dir)
+        if not vdir.exists():
+            print(f"错误: 视频文件夹不存在: {args.video_dir}")
+            return
+        for ext in ("*.mp4", "*.avi", "*.mov", "*.mkv"):
+            video_files.extend(vdir.glob(ext))
+        video_files = sorted(set(video_files))
+    if not video_files:
+        parser.error("必须指定 --video 或 --video_dir 之一")
 
     print(f"加载模型: {args.weight}")
     model = YOLO(args.weight)
 
-    print(f"开始hand-object anchored跟踪视频: {args.video}")
-    print(f"tracker配置: {tracker_yaml}")
-    results = model.track(
-        source=args.video,
-        conf=args.conf,
-        imgsz=args.imgsz,
-        tracker=tracker_yaml,
-        persist=True,
-        save=True,
-        project=str(output_dir),
-        name="",
-        verbose=False,
-    )
+    for vi, video_path in enumerate(video_files, 1):
+        video_name = video_path.stem
+        out_base = Path(args.output_dir) if args.output_dir else Path(".")
+        if out_base.exists() and not out_base.is_dir():
+            out_base.unlink()   # remove file from broken previous run
+        out_base.mkdir(parents=True, exist_ok=True)
+        output_name = args.output if args.output else f"{video_name}_inference.mp4"
+        output_path = out_base / output_name
+        output_dir = output_path.parent
+        if not output_dir.exists():
+            output_dir.mkdir(parents=True, exist_ok=True)
 
-    predictor_save_dir = Path(model.predictor.save_dir) if getattr(model, "predictor", None) is not None else None
-    src_video = find_saved_video(output_path, output_dir, predictor_save_dir)
-    dst_video = None
-    if src_video is not None:
-        dst_video = output_dir / output_name
-        if src_video.resolve() != dst_video.resolve():
-            shutil.move(str(src_video), str(dst_video))
-        print(f"✓ hand-object anchored跟踪完成! 结果已保存到: {dst_video}")
-    elif results:
-        print(f"警告: 未找到Ultralytics保存的视频文件，请检查: {predictor_save_dir}")
+        tracker_yaml = build_tracker_yaml(args, output_dir)
 
-    tracker = getattr(getattr(model, "predictor", None), "trackers", [None])[0]
-    events = getattr(tracker, "virtual_door_events", []) or []
-    door_manager = getattr(tracker, "virtual_door_manager", None)
-    if dst_video is not None and dst_video.exists():
-        overlay_virtual_door_counts(dst_video, events, door_manager)
-        print(f"✓ 已在视频中叠加虚拟门和数量: 拿出 {sum(e.get('event') == 'take_out' for e in events)}, 放入 {sum(e.get('event') == 'put_in' for e in events)}")
-    if events:
-        print(f"虚拟门事件数量: {len(events)}")
-        for event in events:
-            print(event)
+        print(f"\n[{vi}/{len(video_files)}] 开始跟踪: {video_path}")
+        print(f"tracker配置: {tracker_yaml}")
+        import tempfile
+        ultralytics_project = Path(tempfile.mkdtemp(prefix=f"ultralytics_{video_name}_"))
+        results = model.track(
+            source=str(video_path),
+            conf=args.conf,
+            imgsz=args.imgsz,
+            tracker=tracker_yaml,
+            persist=True,
+            save=True,
+            project=str(ultralytics_project),
+            name="",
+            verbose=False,
+        )
+
+        predictor_save_dir = Path(model.predictor.save_dir) if getattr(model, "predictor", None) is not None else None
+        src_video = find_saved_video(output_path, output_dir, predictor_save_dir)
+        dst_video = None
+        if src_video is not None:
+            dst_video = output_dir / output_name
+            if src_video.resolve() != dst_video.resolve():
+                shutil.move(str(src_video), str(dst_video))
+            print(f"✓ 跟踪完成! 结果已保存到: {dst_video}")
+        elif results:
+            print(f"警告: 未找到Ultralytics保存的视频文件，请检查: {predictor_save_dir}")
+
+        tracker = getattr(getattr(model, "predictor", None), "trackers", [None])[0]
+        events = getattr(tracker, "virtual_door_events", []) or []
+        door_manager = getattr(tracker, "virtual_door_manager", None)
+        if dst_video is not None and dst_video.exists():
+            overlay_virtual_door_counts(dst_video, events, door_manager)
+            print(f"✓ 已叠加虚拟门和数量: 拿出 {sum(e.get('event') == 'take_out' for e in events)}, 放入 {sum(e.get('event') == 'put_in' for e in events)}")
+        if events:
+            print(f"虚拟门事件数量: {len(events)}")
+            for event in events:
+                print(event)
 
 
 if __name__ == "__main__":
