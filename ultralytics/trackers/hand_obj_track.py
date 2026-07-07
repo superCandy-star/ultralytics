@@ -29,6 +29,7 @@ class HandObjTrack(STrack):
         self.last_hold_update_frame = -1
         self.release_confirm_count = 0
         self.last_hold_obj_xywh: np.ndarray | None = None
+        self.last_real_center: np.ndarray | None = None
         self.classification_samples = []
         self.classification_label: str | None = None
         self.classification_conf: float | None = None
@@ -69,11 +70,13 @@ class HandObjTrack(STrack):
     def re_activate(self, new_track: STrack, frame_id: int, new_id: bool = False):
         """Reactivate this track and clear anchored-lost bookkeeping."""
         super().re_activate(new_track, frame_id, new_id=new_id)
+        self.last_real_center = new_track.xywh[:2].copy()
         self.exit_anchor_mode()
 
     def update(self, new_track: STrack, frame_id: int):
         """Update this track from a detection and clear anchored-lost bookkeeping."""
         super().update(new_track, frame_id)
+        self.last_real_center = new_track.xywh[:2].copy()
         self.exit_anchor_mode()
 
     def propagate_with_hand(self, hand_track: HandObjTrack, frame_id: int) -> None:
@@ -682,21 +685,27 @@ class HandObjBYTETracker(BYTETracker):
 
     def _current_object_tracks_for_events(self) -> list[HandObjTrack]:
         """Return current object tracks that can participate in virtual-door events."""
+        max_drift = self.obj_center_match_dist
         object_tracks = [
             track
             for track in self.tracked_stracks
             if self._is_cls(track, self.obj_cls) and track.is_activated and track.state == TrackState.Tracked
+            and not track.anchor_mode  # skip tracks that are being hand-propagated
+            and (track.last_real_center is None
+                 or float(np.linalg.norm(track.xywh[:2] - track.last_real_center)) <= max_drift)
         ]
         if bool(getattr(self.args, "virtual_door_include_anchored_lost", False)):
-            object_tracks.extend(
-                track
-                for track in self.lost_stracks
-                if self._is_cls(track, self.obj_cls)
-                and track.is_activated
-                and track.anchor_enabled
-                and track.anchor_mode
-                and track.anchor_lost_frames <= self.anchored_lost_max_door_frames
-            )
+            for track in self.lost_stracks:
+                if not (self._is_cls(track, self.obj_cls) and track.is_activated
+                        and track.anchor_enabled and track.anchor_mode
+                        and track.anchor_lost_frames <= self.anchored_lost_max_door_frames):
+                    continue
+                # Skip if anchor propagation has drifted too far from last real detection
+                if track.last_real_center is not None:
+                    drift = float(np.linalg.norm(track.xywh[:2] - track.last_real_center))
+                    if drift > max_drift:
+                        continue
+                object_tracks.append(track)
         return object_tracks
 
     def _update_obj_classification_samples(self, img: np.ndarray | None) -> None:
@@ -728,14 +737,35 @@ class HandObjBYTETracker(BYTETracker):
             return
 
         object_tracks = self._current_object_tracks_for_events()
-        track_by_id = {int(track.track_id): track for track in object_tracks}
+        all_tracks = {int(t.track_id): t for t in (list(self.tracked_stracks) + list(self.lost_stracks))}
         events = self.virtual_door_manager.update(self.frame_id, img, object_tracks)
+
+        # Deduplicate events: same door + overlapping track boxes → keep one
+        deduped = []
         for event in events:
-            track = track_by_id.get(int(event.get("track_id", -1)))
+            e_tid = int(event.get("track_id", -1))
+            e_door = event.get("door_id", "")
+            dup = False
+            for kept in deduped:
+                if kept.get("door_id") != e_door:
+                    continue
+                k_tid = int(kept.get("track_id", -1))
+                t1 = all_tracks.get(e_tid)
+                t2 = all_tracks.get(k_tid)
+                if t1 is None or t2 is None:
+                    continue
+                if matching.iou_distance([t1], [t2])[0, 0] <= 1.0 - 0.3:
+                    dup = True
+                    break
+            if not dup:
+                deduped.append(event)
+
+        for event in deduped:
+            track = all_tracks.get(int(event.get("track_id", -1)))
             classification = self._classification_payload_for_track(track)
             event["classification"] = classification
-        self.last_virtual_door_events = events
-        self.virtual_door_events.extend(events)
+        self.last_virtual_door_events = deduped
+        self.virtual_door_events.extend(deduped)
 
     def reset(self):
         """Reset tracker state and virtual-door state for a new source/video."""
