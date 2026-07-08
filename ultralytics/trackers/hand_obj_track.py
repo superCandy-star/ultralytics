@@ -764,8 +764,32 @@ class HandObjBYTETracker(BYTETracker):
             track = all_tracks.get(int(event.get("track_id", -1)))
             classification = self._classification_payload_for_track(track)
             event["classification"] = classification
-        self.last_virtual_door_events = deduped
-        self.virtual_door_events.extend(deduped)
+        # Collapse rapid alternating transitions (put_in→take_out→put_in)
+        # that occur when an object crosses nested/adjacent side doors.
+        rapid_window = int(getattr(self.args, "virtual_door_rapid_window", 15))
+        self.last_virtual_door_events = []
+        for event in deduped:
+            e_tid = int(event.get("track_id", -1))
+            e_frame = int(event.get("frame_id", self.frame_id))
+            e_type = event.get("event", "")
+            tail = [ev for ev in self.virtual_door_events
+                    if int(ev.get("track_id", -1)) == e_tid
+                    and e_frame - int(ev.get("frame_id", 0)) <= rapid_window]
+            if len(tail) >= 2:
+                types_in_tail = [ev.get("event") for ev in tail]
+                alternates = any(types_in_tail[i] != types_in_tail[i + 1]
+                                 for i in range(len(types_in_tail) - 1))
+                if alternates and e_type == tail[0].get("event"):
+                    for ev in tail:
+                        try:
+                            self.virtual_door_events.remove(ev)
+                            self.last_virtual_door_events = [
+                                x for x in self.last_virtual_door_events if x is not ev
+                            ]
+                        except ValueError:
+                            pass
+            self.virtual_door_events.append(event)
+            self.last_virtual_door_events.append(event)
 
     def reset(self):
         """Reset tracker state and virtual-door state for a new source/video."""

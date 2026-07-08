@@ -222,6 +222,7 @@ def build_tracker_yaml(args, output_dir: Path) -> str:
         "virtual_door_front_direction": args.virtual_door_front_direction,
         "virtual_door_include_anchored_lost": args.virtual_door_include_anchored_lost,
         "virtual_door_anchored_lost_max_frames": args.virtual_door_anchored_lost_max_frames,
+        "virtual_door_rapid_window": args.virtual_door_rapid_window,
         "virtual_door_front_margin": args.virtual_door_front_margin,
         "virtual_door_unknown_confirm_frames": args.virtual_door_unknown_confirm_frames,
         "virtual_door_track_prune_frames": args.virtual_door_track_prune_frames,
@@ -320,6 +321,7 @@ def main():
     parser.add_argument("--virtual_door_fail_open", action=argparse.BooleanOptionalAction, default=None, help="门初始化失败时不影响跟踪")
     parser.add_argument("--virtual_door_confirm_frames", type=int, default=None, help="物体进出状态转换确认帧数")
     parser.add_argument("--virtual_door_anchored_lost_max_frames", type=int, default=None, help="synthetic box参与门事件的最大传播帧数")
+    parser.add_argument("--virtual_door_rapid_window", type=int, default=None, help="同track快速穿越多门时合并事件的时间窗口（帧数）")
     parser.add_argument(
         "--virtual_door_include_anchored_lost",
         action=argparse.BooleanOptionalAction,

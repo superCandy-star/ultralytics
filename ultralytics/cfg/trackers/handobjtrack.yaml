@@ -45,6 +45,7 @@ virtual_door_track_prune_frames: 120 # (int) Frames before stale per-track door 
 virtual_door_fail_open: True # (bool) Disable door events instead of raising if initialization/model fails
 virtual_door_include_anchored_lost: False # (bool) Include hand-propagated synthetic object boxes in door event logic
 virtual_door_anchored_lost_max_frames: 2 # (int) Max anchor_lost_frames for synthetic boxes to participate in door events
+virtual_door_rapid_window: 15 # (int) Time window (frames) for collapsing rapid same-track door transitions
 
 # Track-level object classification for virtual-door events
 obj_classification_enabled: False # (bool) Enable MobileNetV3 track-level classification for obj tracks
