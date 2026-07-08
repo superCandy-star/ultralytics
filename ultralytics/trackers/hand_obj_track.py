@@ -472,18 +472,44 @@ class HandObjBYTETracker(BYTETracker):
         activated: list[HandObjTrack],
         hand_by_id: dict[int, HandObjTrack],
     ) -> None:
-        """Activate new object tracks and bind them to the nearest current hand."""
+        """Activate new object tracks and bind them to the nearest current hand.
+
+        Before creating a new track, check existing obj tracks (both lost and active)
+        for a close match.  If one exists, update it instead of creating a duplicate.
+        """
         hands = list(hand_by_id.values())
+        existing = [
+            t for t in list(self.tracked_stracks) + list(self.lost_stracks)
+            if self._is_cls(t, self.obj_cls) and t.is_activated
+        ]
         for inew in u_detection:
             track = detections[inew]
             if track.score < self.args.new_track_thresh:
                 continue
-            track.activate(self.kalman_filter, self.frame_id)
-            track.is_activated = True  # activate immediately, bypass ByteTrack unconfirmed phase
-            nearest_hand = self._nearest_hand(track, hands)
-            track.bind_hand(nearest_hand, enable_anchor=False)
-            activated.append(track)
-            self._update_held_state(track, hand_by_id)
+            # Check if an existing track already covers this detection
+            recovered = None
+            if existing:
+                dists = matching.iou_distance(existing, [track])
+                best_idx = int(np.argmin(dists[:, 0]))
+                # IoU >= 0.5 → merge instead of creating new
+                if dists[best_idx, 0] <= 1.0 - 0.5:
+                    recovered = existing.pop(best_idx)
+                    recovered.re_activate(track, self.frame_id, new_id=False)
+                    # Also remove from lost_stracks if it was there
+                    try:
+                        self.lost_stracks.remove(recovered)
+                    except ValueError:
+                        pass
+            if recovered is not None:
+                self._update_held_state(recovered, hand_by_id)
+                activated.append(recovered)
+            else:
+                track.activate(self.kalman_filter, self.frame_id)
+                track.is_activated = True
+                nearest_hand = self._nearest_hand(track, hands)
+                track.bind_hand(nearest_hand, enable_anchor=False)
+                activated.append(track)
+                self._update_held_state(track, hand_by_id)
 
     def _update_held_states(
         self,
