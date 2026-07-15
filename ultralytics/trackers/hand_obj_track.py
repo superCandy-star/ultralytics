@@ -418,6 +418,7 @@ class HandObjBYTETracker(BYTETracker):
         """Propagate reusable anchored-lost objects and split lost objects into anchored/normal pools."""
         anchored, normal = [], []
         for track in self.lost_stracks:
+            ## 只处理obj
             if not self._is_cls(track, self.obj_cls):
                 continue
             if not track.anchor_mode or not track.anchor_enabled:
@@ -425,11 +426,12 @@ class HandObjBYTETracker(BYTETracker):
                 continue
 
             # Ghost track: propagated >= 3 frames without ever matching a real detection
+            # 传播超过 3 帧还没匹配上 → 退出 anchor → normal
             if track.anchor_lost_frames >= 3:
                 track.exit_anchor_mode()
                 normal.append(track)
                 continue
-
+            # 超过最大传播帧数 15 → 退出 anchor → normal
             if track.anchor_lost_frames >= self.anchor_track_buffer:
                 track.exit_anchor_mode()
                 normal.append(track)
@@ -438,12 +440,13 @@ class HandObjBYTETracker(BYTETracker):
             # Keep propagating only while hand is available
 
             # Use fallback mechanism to find hand
+            # 找不到候选手 → 退出 anchor → normal
             hand = self._held_candidate_hand(track, hand_by_id)
             if hand is None:
                 track.exit_anchor_mode()
                 normal.append(track)
                 continue
-
+            # 后续该obj被遗失后，会根据手的运动轨迹进行传播
             track.propagate_with_hand(hand, self.frame_id)
             anchored.append(track)
         return anchored, normal
@@ -454,6 +457,10 @@ class HandObjBYTETracker(BYTETracker):
         """Move unmatched object tracks into anchored-lost mode when their bound hand is tracked."""
         for track in tracks:
             # Use fallback mechanism to find hand
+            """
+            满足条件：mark_lost + enter_anchor_mode + propagate_with_hand
+          → 进 lost_stracks，但受 hand-anchor 保护，框被手推着走
+            """
             hand = self._held_candidate_hand(track, hand_by_id)
             if track.anchor_enabled and hand is not None and self.anchor_track_buffer > 0:
                 track.mark_lost()
@@ -461,6 +468,7 @@ class HandObjBYTETracker(BYTETracker):
                 if track.anchor_hand_xywh is None:
                     track.bind_hand(hand)
                 track.propagate_with_hand(hand, self.frame_id)
+            # 进 lost_stracks，和其他 ByteTrack 丢检 track 一样等待恢复     
             else:
                 track.mark_lost()
             lost.append(track)
@@ -541,15 +549,16 @@ class HandObjBYTETracker(BYTETracker):
                 track.anchor_enabled = False
                 track.release_confirm_count = 0
             return
-
+        # 没找到手 → 重置手持计数，累加释放计数
         distance = float(np.linalg.norm(track.xywh[:2] - hand.xywh[:2]))
         obj_center_in_hand = self._center_in_box(track.xywh[:2], hand.xyxy) if self.hold_center_in_hand else False
         hand_center_in_obj = self._center_in_box(hand.xywh[:2], track.xyxy)
         contact_evidence = obj_center_in_hand or hand_center_in_obj
-
+        # 判断手持证据
         obj_moving = False
         if track.last_hold_obj_xywh is not None:
             obj_speed = float(np.linalg.norm(track.xywh[:2] - track.last_hold_obj_xywh[:2]))
+            # 物体需要满足运动才可以说明是在移动，需大于self.hold_motion_min_displacement
             obj_moving = obj_speed >= self.hold_motion_min_displacement
 
         is_held = contact_evidence and obj_moving
@@ -557,8 +566,8 @@ class HandObjBYTETracker(BYTETracker):
         track.last_hold_obj_xywh = track.xywh.copy()
 
         if is_held:
-            track.hold_confirm_count += 1
-            track.release_confirm_count = 0
+            track.hold_confirm_count += 1 # 手持计数+1
+            track.release_confirm_count = 0 # 释放计数清0
             if track.hold_confirm_count >= self.hold_confirm_frames:
                 track.bind_hand(hand, enable_anchor=True)
         else:

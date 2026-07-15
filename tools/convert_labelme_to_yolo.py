@@ -181,8 +181,8 @@ def _process_pair(json_file, img_file, img_output, label_output, class_names):
 
 
 if __name__ == '__main__':
-    source = '/root/taojianwei/datasets/IRIS/20260708_datasets'
-    output = '/root/taojianwei/datasets/IRIS/20260708_datasets_full_yolo'
+    source = '/root/taojianwei/datasets/IRIS/20260709_datasets'
+    output = '/root/taojianwei/datasets/IRIS/20260709_datasets_yolo'
 
     print(f"Converting dataset from {source}")
     print(f"Output directory: {output}")

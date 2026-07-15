@@ -3,6 +3,7 @@ track_high_thresh: 0.25
 track_low_thresh: 0.1
 new_track_thresh: 0.25
 track_buffer: 30
+# 匈牙利配对的作用 matches, u_track, u_detection = matching.linear_assignment(dists, thresh=self.args.match_thresh)
 match_thresh: 0.8
 fuse_score: true
 hand_cls: 0
@@ -13,8 +14,10 @@ anchor_match_thresh: 0.8
 hold_confirm_frames: 2
 hold_center_stable_thresh: 8
 hold_center_in_hand: true
+# 手保持物体跟踪不超过的阈值
 release_confirm_frames: 3
 hold_motion_min_displacement: 1.0
+# 物体距离中心点配对的参数设置 strack_pool, detections, u_track, u_detection, activated, refind, self.obj_center_match_dist
 obj_center_match_dist: 200.0
 hand_center_match_dist: 100.0
 virtual_door_enabled: true
@@ -28,7 +31,9 @@ virtual_door_junction_cls: junction
 virtual_door_cabinet_cls: cabinet
 virtual_door_init_frames: 30
 virtual_door_stability_frames: 5
+# 虚拟门前门virtual_door_stability_frames帧所能允许设定的阈值
 virtual_door_position_tolerance: 10.0
+# 虚拟么侧边门聚类所设的的iou阈值
 virtual_door_side_iou_tolerance: 0.8
 virtual_door_confirm_frames: 5
 virtual_door_unknown_confirm_frames: 1
