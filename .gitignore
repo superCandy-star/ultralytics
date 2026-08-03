@@ -209,3 +209,6 @@ results.csv
 *.pdf
 *.md
 *.docx
+# Project policy: documentation and shell scripts are not tracked
+*.md
+*.sh

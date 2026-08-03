@@ -21,17 +21,15 @@ from __future__ import annotations
 import argparse, sys, time
 from pathlib import Path
 
-import numpy as np
 import torch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from tools.train_dual_task import (DualHeadModel, MODEL_CFG, YOLODataset, _load_batch,
-                                   _validate_one_head, _compute_ap_from_pr, _compute_map)
+from tools.train_dual_task import DualHeadModel, MODEL_CFG, _init_strides, _validate
 
 
-def load_model(weight_path: str, device: str):
+def load_model(weight_path: str, device: str, imgsz: int):
     """Load dual-task checkpoint and return model."""
     ckpt = torch.load(weight_path, map_location="cpu", weights_only=False)
     nc = ckpt.get("args", {}).get("nc", [2, 4]) if "args" in ckpt else ckpt.get("nc", [2, 4])
@@ -39,31 +37,16 @@ def load_model(weight_path: str, device: str):
         nc = [2, 4]
 
     model = DualHeadModel(MODEL_CFG, nc=nc)
-    state = ckpt.get("model", ckpt) if isinstance(ckpt, dict) else ckpt
+    state = (ckpt.get("ema") or ckpt.get("model") or ckpt) if isinstance(ckpt, dict) else ckpt
     if hasattr(state, "state_dict"):
         state = state.state_dict()
     model.load_state_dict(state, strict=False)
     from ultralytics.utils import IterableSimpleNamespace
     model.args = IterableSimpleNamespace(box=7.5, cls=0.5, dfl=1.5)
     model.to(device)
-    # Note: model stays in eval mode here; _validate_one_head internally
-    # switches to train mode for dict output from Detect.forward()
+    _init_strides(model, imgsz, torch.device(device))
+    model.eval()
     return model, nc
-
-
-@torch.no_grad()
-def val_one_task(model: DualHeadModel, data_yaml: str, task_id: int,
-                 imgsz: int, batch: int, device: str, conf: float):
-    """Validate a single task head on given dataset using proper mAP."""
-    ds = YOLODataset(data_yaml, imgsz)
-    head_nc = [2, 4][task_id]
-
-    print(f"  val images: {min(len(ds), 2000)}, nc={head_nc}")
-
-    r = _validate_one_head(model, ds, task_id, imgsz, batch,
-                           torch.device(device), max_imgs=2000)
-    r["images"] = min(len(ds), 2000)
-    return r
 
 
 def main():
@@ -77,35 +60,28 @@ def main():
     parser.add_argument("--data_door", type=str,
                         default="/root/taojianwei/datasets/IRIS/auxiliary_datasets/20260729_datasets_yolo/data.yaml",
                         help="虚拟门检测 data.yaml")
-    parser.add_argument("--imgsz", type=int, default=640, help="输入尺寸")
-    parser.add_argument("--batch", type=int, default=16, help="批量大小")
-    parser.add_argument("--conf", type=float, default=0.001, help="置信度阈值")
+    parser.add_argument("--imgsz", type=int, default=320, help="输入尺寸")
+    parser.add_argument("--batch", type=int, default=64, help="批量大小")
     parser.add_argument("--device", type=str, default="0")
+    parser.add_argument("--num_workers", type=int, default=8)
     args = parser.parse_args()
+    args.hand_obj_data = args.data_det
+    args.virtual_door_data = args.data_door
 
     device = f"cuda:{args.device}" if torch.cuda.is_available() else "cpu"
     print(f"Loading: {args.weight}")
-    model, nc = load_model(args.weight, device)
+    model, nc = load_model(args.weight, device, args.imgsz)
     print(f"Model: heads={model._h_idx} nc={nc}")
 
-    tasks = []
-    if args.task == "all":
-        tasks = [("Hand+Obj (task 0)", args.data_det, 0),
-                 ("Door (task 1)", args.data_door, 1)]
-    elif args.task == "0":
-        tasks = [("Hand+Obj", args.data_det, 0)]
-    else:
-        tasks = [("Door", args.data_door, 1)]
-
-    for name, data_yaml, tid in tasks:
-        print(f"\n{'='*50}")
-        print(f"Validating: {name}")
-        t0 = time.time()
-        metrics = val_one_task(model, data_yaml, tid, args.imgsz, args.batch, device, args.conf)
-        print(f"  mAP@0.5: {metrics['mAP50']:.4f}")
-        print(f"  mAP@0.5:0.95: {metrics['mAP50-95']:.4f}")
-        print(f"  Images: {metrics['images']}")
-        print(f"  Time: {time.time()-t0:.0f}s")
+    t0 = time.time()
+    task_ids = (0, 1) if args.task == "all" else (int(args.task),)
+    metrics = _validate(model, args, torch.device(device), task_ids=task_ids)
+    selected = ["det", "door"] if args.task == "all" else ["det" if args.task == "0" else "door"]
+    for task_name in selected:
+        r = metrics[task_name]
+        print(f"\n{task_name}: P={r['precision']:.4f} R={r['recall']:.4f} "
+              f"mAP@0.5={r['mAP50']:.4f} mAP@0.5:0.95={r['mAP50-95']:.4f}")
+    print(f"Time: {time.time()-t0:.0f}s")
 
 
 if __name__ == "__main__":

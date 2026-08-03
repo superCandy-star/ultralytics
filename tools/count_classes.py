@@ -12,14 +12,14 @@ from pathlib import Path
 from collections import defaultdict
 
 
-def count_classes_in_dir(labels_dir: str) -> dict:
-    """统计目录中所有txt文件的类别数量"""
+def count_classes_in_dir(labels_dir: str) -> tuple:
+    """统计目录中所有txt文件的类别数量和图片数量"""
     class_counts = defaultdict(int)
     labels_path = Path(labels_dir)
 
     if not labels_path.exists():
         print(f"  ⚠ 目录不存在: {labels_dir}")
-        return class_counts
+        return class_counts, 0
 
     txt_files = list(labels_path.glob('*.txt'))
 
@@ -31,7 +31,7 @@ def count_classes_in_dir(labels_dir: str) -> dict:
                     class_id = int(line.split()[0])
                     class_counts[class_id] += 1
 
-    return class_counts
+    return class_counts, len(txt_files)
 
 
 def main():
@@ -62,17 +62,20 @@ def main():
     print("=" * 60)
 
     train_total = defaultdict(int)
+    train_images = 0
     for img_dir in train_dirs:
         labels_dir = img_dir.replace('/images/', '/labels/')
         print(f"\n目录: {labels_dir}")
-        counts = count_classes_in_dir(labels_dir)
+        counts, num_images = count_classes_in_dir(labels_dir)
+        print(f"  图片数量: {num_images}")
+        train_images += num_images
 
         for class_id, count in sorted(counts.items()):
             class_name = id_to_name.get(class_id, f"Class_{class_id}")
             print(f"  {class_id}: {class_name:20s} → {count:6d}")
             train_total[class_id] += count
 
-    print(f"\nTRAIN 总计:")
+    print(f"\nTRAIN 总计: 图片 {train_images}")
     for class_id in sorted(train_total.keys()):
         class_name = id_to_name.get(class_id, f"Class_{class_id}")
         print(f"  {class_id}: {class_name:20s} → {train_total[class_id]:6d}")
@@ -87,17 +90,20 @@ def main():
     print("=" * 60)
 
     val_total = defaultdict(int)
+    val_images = 0
     for img_dir in val_dirs:
         labels_dir = img_dir.replace('/images/', '/labels/')
         print(f"\n目录: {labels_dir}")
-        counts = count_classes_in_dir(labels_dir)
+        counts, num_images = count_classes_in_dir(labels_dir)
+        print(f"  图片数量: {num_images}")
+        val_images += num_images
 
         for class_id, count in sorted(counts.items()):
             class_name = id_to_name.get(class_id, f"Class_{class_id}")
             print(f"  {class_id}: {class_name:20s} → {count:6d}")
             val_total[class_id] += count
 
-    print(f"\nVAL 总计:")
+    print(f"\nVAL 总计: 图片 {val_images}")
     for class_id in sorted(val_total.keys()):
         class_name = id_to_name.get(class_id, f"Class_{class_id}")
         print(f"  {class_id}: {class_name:20s} → {val_total[class_id]:6d}")
@@ -116,7 +122,9 @@ def main():
 
     train_sum = sum(train_total.values())
     val_sum = sum(val_total.values())
-    print(f"\n总数: Train={train_sum}  Val={val_sum}  Total={train_sum + val_sum}")
+    print(f"\n总数: "
+          f"Train图片={train_images} Val图片={val_images} Total图片={train_images + val_images} | "
+          f"Train标签={train_sum} Val标签={val_sum} Total标签={train_sum + val_sum}")
 
 
 if __name__ == '__main__':
