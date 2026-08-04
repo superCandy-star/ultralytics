@@ -46,6 +46,8 @@ virtual_door_fail_open: True # (bool) Disable door events instead of raising if 
 virtual_door_include_anchored_lost: False # (bool) Include hand-propagated synthetic object boxes in door event logic
 virtual_door_anchored_lost_max_frames: 2 # (int) Max anchor_lost_frames for synthetic boxes to participate in door events
 virtual_door_rapid_window: 15 # (int) Time window (frames) for collapsing rapid same-track door transitions
+virtual_door_far_door_margin: 50 # (float) Beyond this distance from the front door line, state transitions confirm in 1 frame (fast-crossing detection dropout fix)
+virtual_door_inherit_iou_thresh: 0.3 # (float) IoU required for a new track to inherit a removed event track's door state
 
 # Track-level object classification for virtual-door events
 obj_classification_enabled: False # (bool) Enable MobileNetV3 track-level classification for obj tracks

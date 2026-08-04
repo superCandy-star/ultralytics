@@ -74,6 +74,12 @@ class VirtualDoorManager:
         self.unknown_confirm_frames = max(1, int(getattr(args, "virtual_door_unknown_confirm_frames", 1)))
         self.front_direction = getattr(args, "virtual_door_front_direction", "y_greater_inside")
         self.front_margin = max(0.0, float(getattr(args, "virtual_door_front_margin", 3.0)))
+        # C++ port (iris_config.h VirtualDoorConfig.far_door_margin): beyond this distance
+        # from the front door line, state transitions confirm in a single frame — fast
+        # motion crossing the line can miss YOLO detections for 1-2 frames.
+        self.far_door_margin = max(0.0, float(getattr(args, "virtual_door_far_door_margin", 50.0)))
+        # C++ port: a new track inherits a removed track's door state when boxes overlap
+        self.inherit_iou_thresh = float(getattr(args, "virtual_door_inherit_iou_thresh", 0.3))
         self.track_prune_frames = max(1, int(getattr(args, "virtual_door_track_prune_frames", 120)))
         self.fail_open = self._as_bool(getattr(args, "virtual_door_fail_open", True))
 
@@ -416,7 +422,10 @@ class VirtualDoorManager:
         events: list[dict[str, Any]] = []
         front_observed = self._classify_front(track)
         if front_observed is not None:
-            transition = self._advance_state(state.front, front_observed)
+            # C++ port: far from the door line → confirm in 1 frame (fast crossing
+            # may miss detections); near the line → confirm_frames debounce.
+            far_from_door = abs(float(track.xywh[1]) - self.front_y) > self.far_door_margin
+            transition = self._advance_state(state.front, front_observed, far_from_door)
             if transition is not None:
                 event, from_state, to_state = transition
                 events.append(self._make_event(frame_id, track, "front", "front", event, from_state, to_state))
@@ -455,8 +464,12 @@ class VirtualDoorManager:
         inside = bool(door_box[0] <= cx <= door_box[2] and door_box[1] <= cy <= door_box[3])
         return INSIDE if inside else OUTSIDE
 
-    def _advance_state(self, record: DoorStateRecord, observed: str) -> tuple[str, str, str] | None:
-        """Advance one debounced state record and return an event transition when one occurs."""
+    def _advance_state(self, record: DoorStateRecord, observed: str, far_from_door: bool = False) -> tuple[str, str, str] | None:
+        """Advance one debounced state record and return an event transition when one occurs.
+
+        far_from_door=True (front door only, C++ port) confirms the transition after a
+        single frame instead of confirm_frames.
+        """
         previous = record.state
         if previous == UNKNOWN:
             self._update_candidate(record, observed)
@@ -472,7 +485,8 @@ class VirtualDoorManager:
             return None
 
         self._update_candidate(record, observed)
-        if record.candidate_count < self.confirm_frames:
+        needed = 1 if far_from_door else self.confirm_frames
+        if record.candidate_count < needed:
             return None
 
         record.state = observed
@@ -516,6 +530,29 @@ class VirtualDoorManager:
                 "detail": getattr(track, "classification_detail", None),
             },
         }
+
+    def reset_track_state(self, track_id: int) -> None:
+        """Reset one track's door state records so the next trajectory starts fresh (C++ port)."""
+        state = self.object_states.get(track_id)
+        if state is not None:
+            state.front = DoorStateRecord()
+            state.sides = {}
+
+    def copy_track_state(self, from_id: int, to_id: int) -> None:
+        """Copy a track's door state to another track (C++ port: state inheritance).
+
+        A new track created at the same location as a track removed right after an
+        event inherits the removed track's front/side state records so a side-door
+        transition does not break the front-door transition in progress.
+        """
+        src = self.object_states.get(from_id)
+        if src is None:
+            return
+        self.object_states[to_id] = ObjectDoorState(
+            front=DoorStateRecord(src.front.state, src.front.candidate, src.front.candidate_count),
+            sides={k: DoorStateRecord(v.state, v.candidate, v.candidate_count) for k, v in src.sides.items()},
+            last_seen_frame=src.last_seen_frame,
+        )
 
     def _prune_states(self, frame_id: int, active_track_ids: set[int]) -> None:
         """Drop stale per-track door state to keep memory bounded."""

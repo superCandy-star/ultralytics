@@ -36,6 +36,9 @@ class HandObjTrack(STrack):
         self.classification_scores: dict[str, float] | None = None
         self.classification_frame_id = -1
         self.classification_detail: dict[str, Any] | None = None
+        # Reclassify bookkeeping (ported from C++ iris_engine.cc)
+        self.last_classified_sample_count = 0
+        self.classification_xyxy: np.ndarray | None = None
 
     def bind_hand(self, hand_track: HandObjTrack | None, enable_anchor: bool = False) -> None:
         """Bind this object track to a hand track and remember the hand's current box."""
@@ -140,6 +143,10 @@ class HandObjBYTETracker(BYTETracker):
         self.obj_classification_results: dict[int, dict[str, Any]] = {}
         self.last_virtual_door_events: list[dict[str, Any]] = []
         self.virtual_door_events: list[dict[str, Any]] = []
+        # Post-event track removal bookkeeping (C++ iris_engine.cc port)
+        self.inherit_iou_thresh = float(getattr(args, "virtual_door_inherit_iou_thresh", 0.3))
+        self.last_removed_track_id = -1
+        self.last_removed_track_xyxy: np.ndarray | None = None
 
     def update(self, results, img: np.ndarray | None = None, feats: np.ndarray | None = None, **kwargs) -> np.ndarray:
         """Update hand/object tracks and return rows in Ultralytics tracker format."""
@@ -217,6 +224,11 @@ class HandObjBYTETracker(BYTETracker):
     ) -> None:
         """Update object tracks with hand-anchored lost/reassociation behavior."""
         anchored_tracks, normal_lost = self._prepare_lost_object_tracks(hand_by_id, removed)
+        # C++ port (hand_obj_tracker.cc): stale lost obj tracks (> 5 frames since the
+        # last real detection) are excluded from the pool so the next detection creates
+        # a fresh track instead of reviving an old one through the center-distance
+        # fallback (which could merge two different objects).
+        normal_lost = [t for t in normal_lost if self.frame_id - t.frame_id <= 5]
         unconfirmed, tracked = self._split_tracked_for_cls(self.obj_cls)
         strack_pool = joint_stracks(tracked, normal_lost)
         self.multi_predict(strack_pool)
@@ -486,22 +498,26 @@ class HandObjBYTETracker(BYTETracker):
         for a close match.  If one exists, update it instead of creating a duplicate.
         """
         hands = list(hand_by_id.values())
-        existing = [
-            t for t in list(self.tracked_stracks) + list(self.lost_stracks)
-            if self._is_cls(t, self.obj_cls) and t.is_activated
-        ]
+        tracked = [t for t in self.tracked_stracks if self._is_cls(t, self.obj_cls) and t.is_activated]
+        lost = [t for t in self.lost_stracks if self._is_cls(t, self.obj_cls) and t.is_activated]
         for inew in u_detection:
             track = detections[inew]
             if track.score < self.args.new_track_thresh:
                 continue
             # Check if an existing track already covers this detection
-            recovered = None
-            if existing:
-                dists = matching.iou_distance(existing, [track])
-                best_idx = int(np.argmin(dists[:, 0]))
-                # IoU >= 0.5 → merge instead of creating new
-                if dists[best_idx, 0] <= 1.0 - 0.5:
-                    recovered = existing.pop(best_idx)
+            recovered = self._recover_object_track(track, tracked, lost)
+            if recovered is not None:
+                # force_new (ported from C++ hand_obj_tracker.cc): a track that was
+                # classified and then lost for > 5 frames gets a fresh track id instead
+                # of being revived at the old object's location — otherwise the stale
+                # classification label pollutes the newly appearing object.
+                if (
+                    getattr(recovered, "classification_label", None) is not None
+                    and self.frame_id > recovered.frame_id
+                    and self.frame_id - recovered.frame_id > 5
+                ):
+                    recovered = None
+                else:
                     recovered.re_activate(track, self.frame_id, new_id=False)
                     # Also remove from lost_stracks if it was there
                     try:
@@ -512,12 +528,58 @@ class HandObjBYTETracker(BYTETracker):
                 self._update_held_state(recovered, hand_by_id)
                 activated.append(recovered)
             else:
+                # Dedup (C++ port): if the new track heavily overlaps a lost track,
+                # that lost track was a false positive — remove it so only the fresh
+                # track remains.
+                for it in list(self.lost_stracks):
+                    if self._is_cls(it, self.obj_cls) and self._bbox_iou(track.xyxy, it.xyxy) >= 0.8:
+                        it.mark_removed()
+                        self.removed_stracks.append(it)
+                        self.lost_stracks.remove(it)
                 track.activate(self.kalman_filter, self.frame_id)
                 track.is_activated = True
                 nearest_hand = self._nearest_hand(track, hands)
                 track.bind_hand(nearest_hand, enable_anchor=False)
-                activated.append(track)
                 self._update_held_state(track, hand_by_id)
+                activated.append(track)
+
+    def _recover_object_track(
+        self, det: HandObjTrack, tracked: list[HandObjTrack], lost: list[HandObjTrack]
+    ) -> HandObjTrack | None:
+        """Find an existing obj track covering a new detection (C++ InitNewObjectTracks port).
+
+        Recovery layers, in order:
+          1. IoU >= 0.3 against tracked tracks
+          2. IoU >= 0.3 against lost tracks
+          3. center within obj_center_match_dist*0.25 of last_real_center AND IoU >= 0.15 (tracked)
+          4. center within 100px of last_real_center AND IoU >= 0.15 (lost), skipping lost
+             tracks that duplicate an active tracked track (IoU >= 0.8)
+        """
+        for t in tracked:
+            if self._bbox_iou(det.xyxy, t.xyxy) >= 0.3:
+                return t
+        for t in lost:
+            if self._bbox_iou(det.xyxy, t.xyxy) >= 0.3:
+                return t
+        recover_dist = self.obj_center_match_dist * 0.25
+        for t in tracked:
+            if t.last_real_center is None:
+                continue
+            if np.linalg.norm(det.xywh[:2] - t.last_real_center) <= recover_dist \
+                    and self._bbox_iou(det.xyxy, t.xyxy) >= 0.15:
+                return t
+        for t in lost:
+            if t.last_real_center is None:
+                continue
+            if np.linalg.norm(det.xywh[:2] - t.last_real_center) > 100.0:
+                continue
+            if self._bbox_iou(det.xyxy, t.xyxy) < 0.15:
+                continue
+            # Skip if this lost track duplicates an active tracked track (same physical object)
+            if any(self._bbox_iou(t.xyxy, a.xyxy) >= 0.8 for a in tracked):
+                continue
+            return t
+        return None
 
     def _update_held_states(
         self,
@@ -618,6 +680,17 @@ class HandObjBYTETracker(BYTETracker):
         """Return whether a center point lies inside an xyxy box."""
         return bool(xyxy[0] <= center[0] <= xyxy[2] and xyxy[1] <= center[1] <= xyxy[3])
 
+    @staticmethod
+    def _bbox_iou(box1: np.ndarray, box2: np.ndarray) -> float:
+        """Return IoU between two [x1, y1, x2, y2] boxes."""
+        x1, y1 = max(box1[0], box2[0]), max(box1[1], box2[1])
+        x2, y2 = min(box1[2], box2[2]), min(box1[3], box2[3])
+        inter = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+        area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
+        area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
+        union = area1 + area2 - inter
+        return inter / union if union > 0 else 0.0
+
     def _nearest_hand(self, track: HandObjTrack, hands: list[HandObjTrack]) -> HandObjTrack | None:
         """Return the nearest hand track to an object track, respecting the binding distance threshold."""
         if not hands:
@@ -664,14 +737,19 @@ class HandObjBYTETracker(BYTETracker):
         return int(track.cls) == cls
 
     def _remove_stale_lost(self, removed: list[HandObjTrack]) -> None:
-        """Remove lost tracks, ending anchor mode before applying the normal lost timeout."""
+        """Remove lost tracks, ending anchor mode before applying the lost timeout.
+
+        C++ port: obj tracks get a fast 5-frame timeout (hand tracks keep the standard
+        max_frames_lost=30); anchor-mode obj tracks are exempt from the timeout while
+        their hand is still tracked.
+        """
         for track in self.lost_stracks:
             if self._is_cls(track, self.obj_cls) and track.anchor_mode:
                 if track.anchor_lost_frames >= self.anchor_track_buffer:
                     track.exit_anchor_mode()
-                else:
-                    continue
-            if self.frame_id - track.end_frame > self.max_frames_lost:
+                continue
+            max_gap = 5 if self._is_cls(track, self.obj_cls) else self.max_frames_lost
+            if self.frame_id - track.end_frame > max_gap:
                 track.mark_removed()
                 removed.append(track)
 
@@ -750,6 +828,32 @@ class HandObjBYTETracker(BYTETracker):
         for track in self._current_object_tracks_for_events():
             if track.state == TrackState.Tracked:
                 self.obj_classifier.add_sample(track, self.frame_id, img)
+                self._maybe_reclassify(track)
+
+    def _maybe_reclassify(self, track: HandObjTrack) -> None:
+        """Reclassify a track when its sample cache doubles or its box moved far since last classification.
+
+        Ported from the C++ iris_engine.cc reclassify policy: without this, a track is
+        classified exactly once (lazy) and a bad early label is never corrected — e.g. an
+        object classified while still hand-occluded stays wrong forever.
+        """
+        if len(track.classification_samples) < self.obj_classifier.min_track_len:
+            return
+        need_reclassify = track.classification_label is None
+        if not need_reclassify and track.last_classified_sample_count > 0:
+            # Reclassify when the sample count doubles since the last run
+            if len(track.classification_samples) >= track.last_classified_sample_count * 2:
+                need_reclassify = True
+            # Reclassify when the box moved so far that IoU with the box recorded
+            # at the last classification dropped below 0.5
+            elif track.classification_xyxy is not None:
+                if self._bbox_iou(track.xyxy, track.classification_xyxy) < 0.5:
+                    need_reclassify = True
+        if not need_reclassify:
+            return
+        track.last_classified_sample_count = len(track.classification_samples)
+        track.classification_xyxy = track.xyxy.copy()
+        self.obj_classifier.classify_track(track)
 
     def _classification_payload_for_track(self, track: HandObjTrack | None) -> dict[str, Any]:
         """Return or compute classification payload for one object track."""
@@ -764,6 +868,29 @@ class HandObjBYTETracker(BYTETracker):
         payload = self.obj_classifier.classification_payload(track)
         self.obj_classification_results[int(track.track_id)] = payload
         return payload
+
+    def remove_track(self, track_id: int) -> None:
+        """Remove an obj track from all pools and record its last box for state inheritance.
+
+        Ported from C++ hand_obj_tracker.cc RemoveTrack: called right after a virtual-door
+        event so the next trajectory starts completely fresh; the recorded box lets a new
+        track created at the same location inherit the removed track's door state.
+        """
+        self.last_removed_track_id = -1
+        self.last_removed_track_xyxy = None
+        for t in self.tracked_stracks:
+            if t.track_id == track_id and self._is_cls(t, self.obj_cls):
+                self.last_removed_track_id = track_id
+                self.last_removed_track_xyxy = t.xyxy.copy()
+                break
+        if self.last_removed_track_id != track_id:
+            for t in self.lost_stracks:
+                if t.track_id == track_id and self._is_cls(t, self.obj_cls):
+                    self.last_removed_track_id = track_id
+                    self.last_removed_track_xyxy = t.xyxy.copy()
+                    break
+        self.tracked_stracks = [t for t in self.tracked_stracks if t.track_id != track_id]
+        self.lost_stracks = [t for t in self.lost_stracks if t.track_id != track_id]
 
     def _update_virtual_door_events(self, img: np.ndarray | None) -> None:
         """Update virtual-door event state from finalized current-frame object tracks."""
@@ -826,12 +953,30 @@ class HandObjBYTETracker(BYTETracker):
             self.virtual_door_events.append(event)
             self.last_virtual_door_events.append(event)
 
+        # Post-event cleanup (C++ iris_engine.cc port): remove the event track so the
+        # next trajectory starts completely fresh; a new obj track created this frame
+        # that overlaps the removed track's box inherits its door state so front/side
+        # transitions continue seamlessly.
+        for event in self.last_virtual_door_events:
+            e_tid = int(event.get("track_id", -1))
+            self.remove_track(e_tid)
+            self.virtual_door_manager.reset_track_state(e_tid)
+        if self.last_removed_track_id >= 0 and self.last_removed_track_xyxy is not None:
+            for track in self.tracked_stracks:
+                if track.start_frame != self.frame_id or not self._is_cls(track, self.obj_cls):
+                    continue
+                if self._bbox_iou(track.xyxy, self.last_removed_track_xyxy) >= self.inherit_iou_thresh:
+                    self.virtual_door_manager.copy_track_state(self.last_removed_track_id, track.track_id)
+                    break
+
     def reset(self):
         """Reset tracker state and virtual-door state for a new source/video."""
         super().reset()
         self.last_virtual_door_events = []
         self.virtual_door_events = []
         self.obj_classification_results = {}
+        self.last_removed_track_id = -1
+        self.last_removed_track_xyxy = None
         self.virtual_door_manager.reset()
 
     def _format_output(self) -> np.ndarray:

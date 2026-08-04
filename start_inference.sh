@@ -1,6 +1,6 @@
 python tools/track_hand_obj_video.py \
   --weight /root/taojianwei/projects/ultralytics/runs/detect/runs/train/exp-30/weights/best.pt \
-  --video /root/taojianwei/datasets/IRIS/videos/20260708_videos/2026-07-08-15-00-09_cam0.mp4 \
+  --video /root/taojianwei/datasets/IRIS/videos/20260702_videos/2026-07-02-15-20-10_cam0.mp4 \
   --output test.mp4 \
   --conf 0.3 \
   --imgsz 640 \
